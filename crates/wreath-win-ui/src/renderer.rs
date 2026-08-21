@@ -33,7 +33,7 @@ use windows::Win32::UI::Shell::PropertiesSystem::{
     GPS_DEFAULT, IPropertyStore, SHGetPropertyStoreFromParsingName,
 };
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
@@ -466,7 +466,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    const MAX_THUMBNAILS: usize = 96;
+    const MAX_THUMBNAILS: usize = 32;
 
     pub fn new() -> Result<Self, String> {
         let d2d_factory =
@@ -5822,8 +5822,8 @@ impl Renderer {
                 .map_err(|error| error.to_string())?;
         let bitmap = unsafe {
             shell.GetImage(
-                windows::Win32::Foundation::SIZE { cx: 640, cy: 360 },
-                SIIGBF_BIGGERSIZEOK,
+                windows::Win32::Foundation::SIZE { cx: 320, cy: 180 },
+                SIIGBF_RESIZETOFIT,
             )
         }
         .map_err(|error| error.to_string())?;
