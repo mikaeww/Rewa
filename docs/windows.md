@@ -203,7 +203,7 @@ would be roughly 37 MB at 1080p60, 100 MB at 1440p60 and 224 MB at 2160p60 for a
 30 second buffer — the clip itself, not overhead.
 
 `memory_megabytes` decides which of those the recorder is allowed to become. It
-is a hard ceiling between 32 and 512 MB, 128 by default, and it wins over the
+is a hard ceiling between 32 and 512 MB, 64 by default, and it wins over the
 estimate, so a 4K display does not quietly triple the process. What gives way
 instead is length: the ring keeps the newest seconds that fit and the log names
 how many that is.

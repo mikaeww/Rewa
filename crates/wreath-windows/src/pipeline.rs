@@ -122,8 +122,8 @@ pub fn replay_memory_budget(
     let limit = u64::from(limit_megabytes)
         .saturating_mul(1_048_576)
         .clamp(MIN_REPLAY_MEMORY_BYTES, MAX_REPLAY_MEMORY_BYTES);
-    let generous = estimated_bytes.saturating_mul(5) / 2;
-    let budget = generous.clamp(MIN_REPLAY_MEMORY_BYTES, limit);
+    let headroom = estimated_bytes.saturating_add(estimated_bytes / 2);
+    let budget = headroom.clamp(MIN_REPLAY_MEMORY_BYTES, limit);
     usize::try_from(budget).map_err(|_| {
         crate::video::VideoError::Initialization(
             "configured replay memory does not fit this Windows process".into(),
@@ -1652,7 +1652,7 @@ mod tests {
         );
         assert_eq!(
             replay_memory_budget(four_k_sixty, 512).unwrap(),
-            MAX_REPLAY_MEMORY_BYTES as usize
+            four_k_sixty.saturating_add(four_k_sixty / 2) as usize
         );
     }
 
@@ -1675,12 +1675,12 @@ mod tests {
     }
 
     #[test]
-    fn the_memory_budget_leaves_room_above_the_nominal_average() {
+    fn the_memory_budget_leaves_half_the_nominal_average_as_headroom() {
         let nominal = estimated_buffer_bytes(20_000, 30);
 
         let budget = replay_memory_budget(nominal, 512).unwrap() as u64;
 
-        assert!(budget > nominal.saturating_add(nominal / 2));
+        assert_eq!(budget, nominal.saturating_add(nominal / 2));
         assert!(budget <= MAX_REPLAY_MEMORY_BYTES);
     }
 

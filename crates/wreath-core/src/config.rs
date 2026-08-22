@@ -196,7 +196,7 @@ impl Default for CaptureConfig {
             cursor: true,
             follow_game: true,
             games: Vec::new(),
-            memory_megabytes: 128,
+            memory_megabytes: 64,
         }
     }
 }
@@ -409,7 +409,10 @@ mod tests {
 
     #[test]
     fn default_config_is_valid() {
-        Config::default().validate().unwrap();
+        let config = Config::default();
+
+        config.validate().unwrap();
+        assert_eq!(config.capture.memory_megabytes, 64);
     }
 
     #[test]
