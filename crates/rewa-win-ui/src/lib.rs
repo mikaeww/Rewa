@@ -19,4 +19,6 @@ pub mod renderer;
 #[cfg(any(target_os = "windows", test))]
 pub mod text;
 #[cfg(target_os = "windows")]
+pub mod toast;
+#[cfg(target_os = "windows")]
 pub mod tray;

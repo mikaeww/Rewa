@@ -9,11 +9,10 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ARC_SEGMENT,
-    D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_BRUSH_PROPERTIES, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE,
-    D2D1_EXTEND_MODE_CLAMP, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    D2D1_LAYER_OPTIONS_NONE, D2D1_LAYER_PARAMETERS, D2D1_LINE_JOIN_ROUND,
+    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL,
+    D2D1_BITMAP_BRUSH_PROPERTIES, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_CAP_STYLE_ROUND,
+    D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINE_JOIN_ROUND,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
     D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1CreateFactory, ID2D1Bitmap, ID2D1Factory,
     ID2D1HwndRenderTarget, ID2D1PathGeometry, ID2D1SolidColorBrush, ID2D1StrokeStyle,
@@ -40,7 +39,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
 };
-use windows::core::{GUID, PCWSTR, w};
+use windows::core::{GUID, Interface, PCWSTR, w};
 use windows_numerics::{Matrix3x2, Vector2};
 
 use rewa_core::config::{HoverStyle, Language, LibraryView, Theme};
@@ -220,6 +219,10 @@ const CLIP_GROUP_GAP: f32 = 22.0;
 const CLIP_SCROLL_RESERVE: f32 = 14.0;
 const FILTER_ROW_PITCH: f32 = 56.0;
 const FOLDER_COLUMN_WIDTH: f32 = 236.0;
+/// Room above the folder rows for the column's search field.
+const FOLDER_SEARCH_HEIGHT: f32 = 34.0;
+pub const FOLDER_COLUMN_MIN: f32 = 180.0;
+pub const FOLDER_COLUMN_MAX: f32 = 420.0;
 const FOLDER_COLUMN_GAP: f32 = 24.0;
 const FOLDER_ROW_HEIGHT: f32 = 30.0;
 const SETTINGS_RAIL_WIDTH: f32 = 184.0;
@@ -232,7 +235,9 @@ const NAVIGATION_PITCH: f32 = 32.0;
 const EDITOR_BOTTOM_RESERVE: f32 = 226.0;
 const PLAYER_ARROW_GUTTER: f32 = 48.0;
 /// Where the seek rail starts under the video, after play and the time.
-const PLAYER_RAIL_LEFT: f32 = 158.0;
+const PLAYER_RAIL_LEFT: f32 = 118.0;
+/// Middle of the playback row, measured from the foot of the video.
+const PLAYBACK_ROW_CENTER: f32 = 38.0;
 const EDITOR_TIMELINE_HEIGHT: f32 = 118.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -369,11 +374,29 @@ pub fn editor_timeline_fraction(rail: LogicalRect, x: f32) -> u16 {
 
 pub fn player_timeline_rail(model: &UiModel, width: u32, height: u32) -> LogicalRect {
     let stage = player_bounds(model, width, height);
+    playback_rail(
+        stage.left,
+        stage.right,
+        stage.bottom + PLAYBACK_ROW_CENTER,
+        false,
+    )
+}
+
+/// Where the seek rail runs in a playback row; play sits before it, the doors after.
+fn playback_rail(left: f32, right: f32, center: f32, with_mute: bool) -> LogicalRect {
     rect(
-        stage.left + PLAYER_RAIL_LEFT,
-        stage.bottom + 36.0,
-        stage.right - 64.0,
-        stage.bottom + 40.0,
+        left + PLAYER_RAIL_LEFT,
+        center - 2.0,
+        right - if with_mute { 76.0 } else { 40.0 },
+        center + 2.0,
+    )
+}
+
+/// The picture inside the fullscreen video area, once its aspect is kept.
+pub fn fullscreen_picture(model: &UiModel, width: u32, height: u32) -> LogicalRect {
+    fit_aspect(
+        rect(0.0, FULLSCREEN_HEADER_HEIGHT, width as f32, height as f32),
+        model.player_aspect_ratio,
     )
 }
 
@@ -390,10 +413,14 @@ pub fn player_volume_rail(model: &UiModel, width: u32, height: u32) -> LogicalRe
     )
 }
 
-pub fn fullscreen_timeline_rail(width: u32, height: u32) -> LogicalRect {
-    let width = width as f32;
-    let _ = height;
-    rect(42.0, 16.0, (width - 42.0).max(43.0), 22.0)
+pub fn fullscreen_timeline_rail(
+    model: &UiModel,
+    width: u32,
+    height: u32,
+    controls_height: f32,
+) -> LogicalRect {
+    let picture = fullscreen_picture(model, width, height);
+    playback_rail(picture.left, picture.right, controls_height / 2.0, true)
 }
 
 pub fn fullscreen_volume_rail(width: u32, height: u32) -> LogicalRect {
@@ -512,6 +539,9 @@ pub struct Renderer {
     ghost: Option<ID2D1Bitmap>,
     clip_durations: HashMap<PathBuf, Option<u64>>,
     thumbnail_order: VecDeque<PathBuf>,
+    /// Thumbnails drawn in the frame being painted; eviction never takes these.
+    painted: HashSet<PathBuf>,
+    measured: std::cell::RefCell<HashMap<(String, usize), f32>>,
     unavailable_thumbnails: HashSet<PathBuf>,
     consecutive_failures: u32,
     hovered: Option<Action>,
@@ -704,6 +734,8 @@ impl Renderer {
             ghost: None,
             clip_durations: HashMap::new(),
             thumbnail_order: VecDeque::new(),
+            painted: HashSet::new(),
+            measured: std::cell::RefCell::new(HashMap::new()),
             unavailable_thumbnails: HashSet::new(),
             consecutive_failures: 0,
             hovered: None,
@@ -736,6 +768,14 @@ impl Renderer {
         self.unavailable_thumbnails.clear();
     }
 
+    /// A clip replaced in place keeps its path, so its cached picture and length go.
+    pub fn forget_clip(&mut self, path: &Path) {
+        self.thumbnails.remove(path);
+        self.thumbnail_order.retain(|cached| cached != path);
+        self.clip_durations.remove(path);
+        self.unavailable_thumbnails.remove(path);
+    }
+
     pub fn release_cached_images(&mut self) {
         self.app_icon = None;
         self.ghost = None;
@@ -756,7 +796,16 @@ impl Renderer {
 
     fn evict_cold_thumbnails(&mut self) {
         while self.thumbnail_order.len() > Self::MAX_THUMBNAILS {
-            if let Some(cold) = self.thumbnail_order.pop_front() {
+            // a grid with more cards than the cap would otherwise evict what it is
+            // about to draw and reload it from the shell on every paint
+            let Some(position) = self
+                .thumbnail_order
+                .iter()
+                .position(|cached| !self.painted.contains(cached))
+            else {
+                break;
+            };
+            if let Some(cold) = self.thumbnail_order.remove(position) {
                 self.thumbnails.remove(&cold);
             }
         }
@@ -787,6 +836,10 @@ impl Renderer {
         }
         self.hover_progress = 0.0;
         true
+    }
+
+    pub fn hovered(&self) -> Option<&Action> {
+        self.hovered.as_ref()
     }
 
     pub fn is_animating(&self) -> bool {
@@ -843,6 +896,7 @@ impl Renderer {
         self.apply_appearance(model);
         self.ensure_target(window, width, height)?;
         self.hits.clear();
+        self.painted.clear();
         let target = self.target.as_ref().expect("render target exists").clone();
         unsafe {
             target.BeginDraw();
@@ -866,16 +920,18 @@ impl Renderer {
         model: &UiModel,
         width: u32,
         height: u32,
+        picture: LogicalRect,
     ) -> Result<(), String> {
         self.apply_appearance(model);
         self.ensure_target(window, width, height)?;
         self.hits.clear();
+        self.painted.clear();
         let target = self.target.as_ref().expect("render target exists").clone();
         unsafe {
             target.BeginDraw();
             target.Clear(Some(&color(self.palette.canvas)));
         }
-        let drawn = self.render_fullscreen_controls(model, width, height);
+        let drawn = self.render_fullscreen_controls(model, width, height, picture);
         let ended = unsafe { target.EndDraw(None, None) }.map_err(|error| error.to_string());
         let outcome = drawn.and(ended);
         if outcome.is_err() {
@@ -899,6 +955,23 @@ impl Renderer {
         if value.is_empty() {
             return 0.0;
         }
+        // titles are measured every frame, several times while they are shortened;
+        // a DirectWrite layout per call is what made repaints of a full grid heavy
+        let key = (value.to_owned(), format.as_raw() as usize);
+        if let Some(width) = self.measured.borrow().get(&key) {
+            return *width;
+        }
+        let width = self.measure_uncached(value, format);
+        let mut measured = self.measured.borrow_mut();
+        // ponytail: dropped wholesale at the cap; an LRU only pays off with far more text on screen
+        if measured.len() >= 4_096 {
+            measured.clear();
+        }
+        measured.insert(key, width);
+        width
+    }
+
+    fn measure_uncached(&self, value: &str, format: &IDWriteTextFormat) -> f32 {
         let wide = value.encode_utf16().collect::<Vec<_>>();
         let Ok(layout) = (unsafe {
             self.write_factory
@@ -968,17 +1041,12 @@ impl Renderer {
         }
         if model.context_menu.is_some() {
             self.render_context_menu(model, width as f32, height as f32)?;
-        } else {
-            self.toggle_motions.remove("context_menu");
         }
         if model.pending_delete.is_some() {
             self.render_delete_modal(model, width as f32, height as f32)?;
         }
         if model.prompt.is_some() {
             self.render_prompt_modal(model, width as f32, height as f32)?;
-        }
-        if model.pending_delete.is_none() && model.prompt.is_none() {
-            self.toggle_motions.remove("plate");
         }
         if let Some(notice) = &model.notice {
             // a toast at the foot of the stage, the way Leech confirms things
@@ -1038,14 +1106,17 @@ impl Renderer {
             });
         }
         if let Some(drag) = &model.clip_drag_preview {
-            let label = self.strings.move_drag(drag.count);
-            let chip_width = 138.0;
-            let chip_height = 36.0;
+            let label = if model.page == Page::Collections {
+                self.strings.move_drag(drag.count)
+            } else {
+                self.strings.drag_out.to_owned()
+            };
+            let chip_width = self.measure(&label, &self.body) + 32.0;
+            let chip_height = 34.0;
             let left = (drag.x + 14.0).clamp(12.0, width as f32 - chip_width - 12.0);
             let top = (drag.y + 14.0).clamp(12.0, height as f32 - chip_height - 12.0);
             let chip = rect(left, top, left + chip_width, top + chip_height);
-            self.fill(chip, self.palette.surface_raised, RADIUS)?;
-            self.stroke(chip, self.palette.accent, RADIUS, 1.0)?;
+            self.popover_surface(chip)?;
             self.text(
                 &label,
                 chip,
@@ -1102,21 +1173,28 @@ impl Renderer {
         model: &UiModel,
         width: u32,
         height: u32,
+        picture: LogicalRect,
     ) -> Result<(), String> {
         let width = width as f32;
         let height = height as f32;
         self.fill(rect(0.0, 0.0, width, height), 0x000000, 0.0)?;
-        let timeline = rect(42.0, 17.0, width - 42.0, 21.0);
-        let seek_hovered = self.is_hovered(&Action::DragPlayerSeek);
-        self.draw_progress_rail(model, timeline, seek_hovered)?;
-        self.hits.push(HitRegion {
-            rect: rect(timeline.left, 2.0, timeline.right, 36.0),
-            action: Action::DragPlayerSeek,
-        });
-        let row_top = 34.0;
-        let row_bottom = 78.0;
+        self.playback_row(model, picture.left, picture.right, height / 2.0, true)
+    }
+
+    /// Play at the picture's left edge, the fullscreen door at its right edge, time
+    /// and seeking between; the same row under the preview and in fullscreen.
+    fn playback_row(
+        &mut self,
+        model: &UiModel,
+        left: f32,
+        right: f32,
+        center: f32,
+        fullscreen: bool,
+    ) -> Result<(), String> {
+        // floating glyphs are 20 px wide and centred in their area, so an area
+        // centred 10 px in from an edge puts the glyph flush with it
         self.floating_glyph(
-            rect(24.0, row_top, 66.0, row_bottom),
+            rect(left - 6.0, center - 18.0, left + 26.0, center + 18.0),
             if model.player_playing {
                 Glyph::Pause
             } else {
@@ -1125,45 +1203,56 @@ impl Renderer {
             self.palette.primary,
             Some(Action::PlayPause),
         )?;
-        self.floating_glyph(
-            rect(72.0, row_top, 112.0, row_bottom),
-            Glyph::ChevronLeft,
-            self.palette.muted,
-            model.adjacent_clip(-1).map(|_| Action::PreviousClip),
-        )?;
-        self.floating_glyph(
-            rect(116.0, row_top, 156.0, row_bottom),
-            Glyph::ChevronRight,
-            self.palette.muted,
-            model.adjacent_clip(1).map(|_| Action::NextClip),
-        )?;
         self.text(
             &format!(
                 "{} / {}",
                 format_player_time(model.player_position_seconds),
                 format_player_time(model.player_duration_seconds)
             ),
-            rect(174.0, row_top, 302.0, row_bottom),
+            rect(
+                left + 34.0,
+                center - 18.0,
+                left + PLAYER_RAIL_LEFT - 8.0,
+                center + 18.0,
+            ),
             &self.small.clone(),
             self.palette.muted,
         )?;
+        let rail = playback_rail(left, right, center, fullscreen);
+        let seek = Action::DragPlayerSeek;
+        let hovered = self.is_hovered(&seek);
+        self.draw_progress_rail(model, rail, hovered)?;
+        self.hits.push(HitRegion {
+            rect: rect(
+                rail.left - 6.0,
+                center - 16.0,
+                rail.right + 6.0,
+                center + 16.0,
+            ),
+            action: seek,
+        });
+        if fullscreen {
+            self.floating_glyph(
+                rect(right - 62.0, center - 18.0, right - 30.0, center + 18.0),
+                if model.player_volume_percent == 0 {
+                    Glyph::Muted
+                } else {
+                    Glyph::Audio
+                },
+                self.palette.primary,
+                Some(Action::ToggleMute),
+            )?;
+        }
         self.floating_glyph(
-            rect(width - 108.0, row_top, width - 66.0, row_bottom),
-            if model.player_volume_percent == 0 {
-                Glyph::Muted
-            } else {
-                Glyph::Audio
-            },
-            self.palette.primary,
-            Some(Action::ToggleMute),
-        )?;
-        self.floating_glyph(
-            rect(width - 60.0, row_top, width - 18.0, row_bottom),
+            rect(right - 26.0, center - 18.0, right + 6.0, center + 18.0),
             Glyph::Fullscreen,
-            self.palette.primary,
+            if fullscreen {
+                self.palette.primary
+            } else {
+                self.palette.muted
+            },
             Some(Action::ToggleFullscreen),
-        )?;
-        Ok(())
+        )
     }
 
     fn ensure_target(&mut self, window: HWND, width: u32, height: u32) -> Result<(), String> {
@@ -1246,8 +1335,6 @@ impl Renderer {
         painted?;
         if model.capture_panel_open {
             self.render_capture_panel(model, height)?;
-        } else {
-            self.toggle_motions.remove("capture_panel");
         }
         Ok(())
     }
@@ -1602,32 +1689,13 @@ impl Renderer {
             left + POPOVER_WIDTH,
             bottom,
         );
-        let now = Instant::now();
-        let reduced = self.reduced_motion;
-        let motion = self
-            .toggle_motions
-            .entry("capture_panel")
-            .or_insert_with(|| crate::motion::Motion::new(0.0));
-        motion.retarget(1.0, now, reduced);
-        let progress = motion.value(now);
-        self.navigation_was_moving |= motion.active(now);
-
         // the panel floats over the page and swallows clicks before the page sees them
         self.hits.push(HitRegion {
             rect: panel,
             action: Action::Ignore,
         });
-        self.with_arrival(
-            Vector2 {
-                X: panel.left,
-                Y: panel.bottom,
-            },
-            progress,
-            |renderer| {
-                renderer.popover_surface(panel)?;
-                renderer.capture_panel_content(model, panel)
-            },
-        )
+        self.popover_surface(panel)?;
+        self.capture_panel_content(model, panel)
     }
 
     fn capture_panel_content(&mut self, model: &UiModel, panel: LogicalRect) -> Result<(), String> {
@@ -1935,54 +2003,6 @@ impl Renderer {
         }
         self.fill(area, self.palette.surface, 16.0)?;
         self.stroke(area, self.palette.border, 16.0, 1.0)
-    }
-
-    /// Scales and fades a popover in from its anchor corner on the settle spring.
-    fn with_arrival(
-        &mut self,
-        origin: Vector2,
-        progress: f32,
-        body: impl FnOnce(&mut Self) -> Result<(), String>,
-    ) -> Result<(), String> {
-        let Some(target) = self.target.clone() else {
-            return body(self);
-        };
-        if progress >= 1.0 {
-            return body(self);
-        }
-        let scale = 0.94 + 0.06 * progress;
-        let layer = unsafe { target.CreateLayer(None) }.map_err(|error| error.to_string())?;
-        let parameters = D2D1_LAYER_PARAMETERS {
-            contentBounds: D2D_RECT_F {
-                left: f32::MIN,
-                top: f32::MIN,
-                right: f32::MAX,
-                bottom: f32::MAX,
-            },
-            geometricMask: std::mem::ManuallyDrop::new(None),
-            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-            maskTransform: Matrix3x2::identity(),
-            opacity: progress.clamp(0.0, 1.0),
-            opacityBrush: std::mem::ManuallyDrop::new(None),
-            layerOptions: D2D1_LAYER_OPTIONS_NONE,
-        };
-        unsafe {
-            target.SetTransform(&Matrix3x2 {
-                M11: scale,
-                M12: 0.0,
-                M21: 0.0,
-                M22: scale,
-                M31: origin.X * (1.0 - scale),
-                M32: origin.Y * (1.0 - scale),
-            });
-            target.PushLayer(&parameters, &layer);
-        }
-        let painted = body(self);
-        unsafe {
-            target.PopLayer();
-            target.SetTransform(&Matrix3x2::identity());
-        }
-        painted
     }
 
     /// Translucent ink over whatever is below: hover and pressed washes.
@@ -2546,7 +2566,6 @@ impl Renderer {
         let hovered = [&open, &favorite, &external, &menu]
             .into_iter()
             .any(|action| self.is_hovered(action));
-        let lift = if hovered { self.hover_amount(1.0) } else { 0.0 };
 
         // the pointer target for the card is registered first so the overlay
         // buttons drawn on top of it keep their own targets
@@ -2564,28 +2583,7 @@ impl Renderer {
                     CLIP_META_HEIGHT
                 },
         );
-        // hover lifts the picture by 2.5 %, the way tvOS and Photos answer a pointer
-        let grow_x = (resting.right - resting.left) * 0.0125 * lift;
-        let grow_y = (resting.bottom - resting.top) * 0.0125 * lift;
-        let preview = rect(
-            resting.left - grow_x,
-            resting.top - grow_y,
-            resting.right + grow_x,
-            resting.bottom + grow_y,
-        );
-        if lift > 0.0 {
-            self.fill_alpha(
-                rect(
-                    preview.left,
-                    preview.top + 6.0,
-                    preview.right,
-                    preview.bottom + 8.0,
-                ),
-                0x000000,
-                0.22 * lift,
-                RADIUS + 4.0,
-            )?;
-        }
+        let preview = resting;
         if selected {
             self.stroke(
                 rect(
@@ -2861,11 +2859,24 @@ impl Renderer {
         bottom: f32,
     ) -> Result<(), String> {
         let today = crate::clock::now();
+        let title_width = self.measure(self.strings.collections, &self.page_title) + 4.0;
         self.text(
             self.strings.collections,
-            rect(left, top, left + 320.0, top + 32.0),
+            rect(left, top, left + title_width, top + 32.0),
             &self.page_title.clone(),
             self.palette.primary,
+        )?;
+        let column_width = folder_column_width(model);
+        self.door(
+            rect(
+                left + title_width + 12.0,
+                top + 3.0,
+                left + title_width + 38.0,
+                top + 29.0,
+            ),
+            Glyph::Sidebar,
+            column_width == 0.0,
+            Action::ToggleFolderColumn,
         )?;
 
         let create_width = self.measure(self.strings.new_collection_button, &self.button) + 28.0;
@@ -2875,31 +2886,68 @@ impl Renderer {
             self.strings.new_collection_button,
             Action::CreateCollection,
         )?;
-        let search = rect(
-            (create.left - 10.0 - 220.0).max(left + 240.0),
-            top + 2.0,
-            create.left - 10.0,
-            top + 30.0,
-        );
-        if search.right - search.left >= 120.0 {
-            self.search_field(model, search, self.strings.search_collections)?;
-        }
 
         let body_top = top + LIBRARY_BODY_OFFSET;
-        let column = rect(left, body_top, left + FOLDER_COLUMN_WIDTH, bottom);
-        self.render_folder_column(model, column)?;
-        self.fill(
-            rect(
-                column.right + 12.0,
-                body_top - 4.0,
-                column.right + 13.0,
-                bottom,
-            ),
-            self.palette.border,
-            0.0,
-        )?;
+        let area_left = folder_area_left(model, left);
+        if column_width > 0.0 {
+            // the search lives in the column it filters: games and folders by name
+            let column = rect(left, body_top, left + column_width, bottom);
+            self.search_field(
+                model,
+                rect(
+                    column.left,
+                    column.top - 6.0,
+                    column.right,
+                    column.top + 22.0,
+                ),
+                self.strings.search_collections,
+            )?;
+            self.render_folder_column(
+                model,
+                rect(
+                    column.left,
+                    column.top + FOLDER_SEARCH_HEIGHT,
+                    column.right,
+                    column.bottom,
+                ),
+            )?;
+            let divider = Action::DragFolderDivider;
+            let lit = self.is_hovered(&divider);
+            self.fill(
+                rect(
+                    column.right + 12.0,
+                    body_top - 4.0,
+                    column.right + if lit { 14.0 } else { 13.0 },
+                    bottom,
+                ),
+                if lit {
+                    self.palette.secondary
+                } else {
+                    self.palette.border
+                },
+                0.0,
+            )?;
+            self.hits.push(HitRegion {
+                rect: rect(
+                    column.right + 7.0,
+                    body_top - 4.0,
+                    column.right + 19.0,
+                    bottom,
+                ),
+                action: divider,
+            });
+        } else {
+            let search = rect(
+                (create.left - 10.0 - 240.0).max(left + title_width + 50.0),
+                top + 2.0,
+                create.left - 10.0,
+                top + 30.0,
+            );
+            if search.right - search.left >= 120.0 {
+                self.search_field(model, search, self.strings.search_collections)?;
+            }
+        }
 
-        let area_left = column.right + 12.0 + FOLDER_COLUMN_GAP;
         let active = model.active_collection.as_ref().and_then(|path| {
             model
                 .collections
@@ -3873,22 +3921,27 @@ impl Renderer {
         let title = model
             .active_clip()
             .map_or(self.strings.preview_title, |clip| clip.title.as_str());
-        let edit_width = self.measure(self.strings.edit_clip, &self.button) + 28.0;
-        let edit = rect(
-            right - edit_width,
-            content_top() + 2.0,
-            right,
-            content_top() + 30.0,
-        );
-        self.page_toolbar(title, left, edit.left - 16.0, Action::Back)?;
-        if model.active_clip().is_some() {
-            self.action_button(edit, self.strings.edit_clip, Action::EditActiveClip)?;
+        let detail_width = if right - left >= 960.0 { 276.0 } else { 0.0 };
+        // edit and delete sit together: under the details, or in the title row when
+        // the window is too narrow for the details column
+        let actions_left = if detail_width > 0.0 {
+            None
+        } else {
+            Some(right - self.clip_actions_width())
+        };
+        self.page_toolbar(
+            title,
+            left,
+            actions_left.map_or(right, |x| x - 16.0),
+            Action::Back,
+        )?;
+        if let (Some(x), Some(index)) = (actions_left, model.active_clip) {
+            self.clip_actions(x, content_top() + 2.0, index)?;
         }
         let Some(clip) = model.active_clip() else {
             self.empty_state(self.strings.clip_unavailable, left, right, PLAYER_TOP)?;
             return Ok(());
         };
-        let detail_width = if right - left >= 960.0 { 276.0 } else { 0.0 };
         let stage = video_stage(left, right, height, model);
         // square like the child window on top of it; a window region cannot be antialiased
         self.fill(stage, 0x000000, 0.0)?;
@@ -3931,20 +3984,35 @@ impl Renderer {
             let detail_left = right - detail_width;
             let bottom = self.clip_information_panel(model, clip, detail_left, right, stage.top)?;
             if let Some(index) = model.active_clip {
-                let label = self.strings.delete_clip;
-                let width = self.measure(label, &self.small_center) + 28.0;
-                self.quick_button(
-                    rect(
-                        detail_left,
-                        bottom + 14.0,
-                        detail_left + width,
-                        bottom + 42.0,
-                    ),
-                    label,
-                    Action::DeleteClip(index),
-                    true,
-                )?;
+                self.clip_actions(detail_left, bottom + 14.0, index)?;
             }
+        }
+        Ok(())
+    }
+
+    fn clip_actions_width(&self) -> f32 {
+        [self.strings.edit_clip, self.strings.delete_clip]
+            .iter()
+            .map(|label| self.measure(label, &self.small_center) + 28.0)
+            .sum::<f32>()
+            + 8.0
+    }
+
+    /// The preview's two clip actions as quick pills, edit first.
+    fn clip_actions(&mut self, left: f32, top: f32, index: usize) -> Result<(), String> {
+        let mut x = left;
+        for (label, action, destructive) in [
+            (self.strings.edit_clip, Action::EditActiveClip, false),
+            (self.strings.delete_clip, Action::DeleteClip(index), true),
+        ] {
+            let width = self.measure(label, &self.small_center) + 28.0;
+            self.quick_button(
+                rect(x, top, x + width, top + 28.0),
+                label,
+                action,
+                destructive,
+            )?;
+            x += width + 8.0;
         }
         Ok(())
     }
@@ -3978,13 +4046,17 @@ impl Renderer {
         stage: LogicalRect,
         editor: bool,
     ) -> Result<(), String> {
-        let controls = rect(stage.left, stage.bottom, stage.right, stage.bottom + 76.0);
+        let center = stage.bottom + PLAYBACK_ROW_CENTER;
+        if !editor {
+            return self.playback_row(model, stage.left, stage.right, center, false);
+        }
+        // the storyboard below carries the editor's playhead
         self.floating_glyph(
             rect(
-                controls.left + 8.0,
-                controls.top + 18.0,
-                controls.left + 48.0,
-                controls.bottom - 18.0,
+                stage.left - 6.0,
+                center - 18.0,
+                stage.left + 26.0,
+                center + 18.0,
             ),
             if model.player_playing {
                 Glyph::Pause
@@ -4001,46 +4073,13 @@ impl Renderer {
                 format_player_time(model.player_duration_seconds)
             ),
             rect(
-                controls.left + 56.0,
-                controls.top,
-                controls.left + PLAYER_RAIL_LEFT - 8.0,
-                controls.bottom,
+                stage.left + 34.0,
+                center - 18.0,
+                stage.left + 200.0,
+                center + 18.0,
             ),
             &self.small.clone(),
             self.palette.muted,
-        )?;
-        if editor {
-            // the storyboard below carries the editor's playhead
-            return Ok(());
-        }
-        let rail = rect(
-            controls.left + PLAYER_RAIL_LEFT,
-            controls.top + 36.0,
-            controls.right - 64.0,
-            controls.top + 40.0,
-        );
-        let seek = Action::DragPlayerSeek;
-        let hovered = self.is_hovered(&seek);
-        self.draw_progress_rail(model, rail, hovered)?;
-        self.hits.push(HitRegion {
-            rect: rect(
-                rail.left - 6.0,
-                controls.top + 20.0,
-                rail.right + 6.0,
-                controls.bottom - 20.0,
-            ),
-            action: seek,
-        });
-        self.floating_glyph(
-            rect(
-                controls.right - 48.0,
-                controls.top + 18.0,
-                controls.right - 8.0,
-                controls.bottom - 18.0,
-            ),
-            Glyph::Fullscreen,
-            self.palette.muted,
-            Some(Action::ToggleFullscreen),
         )
     }
 
@@ -5129,58 +5168,39 @@ impl Renderer {
             (context.y - menu_height).max(12.0)
         };
         let menu = rect(left, top, left + menu_width, top + menu_height);
-        let now = Instant::now();
-        let reduced = self.reduced_motion;
-        let motion = self
-            .toggle_motions
-            .entry("context_menu")
-            .or_insert_with(|| crate::motion::Motion::new(0.0));
-        motion.retarget(1.0, now, reduced);
-        let progress = motion.value(now);
-        self.navigation_was_moving |= motion.active(now);
-        let origin = Vector2 {
-            X: context.x.clamp(menu.left, menu.right),
-            Y: context.y.clamp(menu.top, menu.bottom),
-        };
         self.hits.push(HitRegion {
             rect: menu,
             action: Action::Ignore,
         });
-        self.with_arrival(origin, progress, |renderer| {
-            renderer.popover_surface(menu)?;
-            let mut row_top = menu.top + 5.0;
-            for entry in entries {
-                let step = pitch(&entry);
-                let row = rect(menu.left + 5.0, row_top, menu.right - 5.0, row_top + step);
-                match entry {
-                    Entry::Header(label) => {
-                        renderer.text(
-                            &renderer.shorten(
-                                label,
-                                &renderer.caption,
-                                row.right - row.left - 24.0,
-                            ),
-                            rect(row.left + 12.0, row.top, row.right - 12.0, row.bottom),
-                            &renderer.caption.clone(),
-                            renderer.palette.muted,
-                        )?;
-                    }
-                    Entry::Rule => {
-                        let middle = (row.top + row.bottom) / 2.0;
-                        renderer.fill(
-                            rect(row.left + 11.0, middle, row.right - 11.0, middle + 1.0),
-                            renderer.palette.hairline,
-                            0.0,
-                        )?;
-                    }
-                    Entry::Row(label, action, dangerous) => {
-                        renderer.context_menu_row(row, label, action, dangerous)?;
-                    }
+        self.popover_surface(menu)?;
+        let mut row_top = menu.top + 5.0;
+        for entry in entries {
+            let step = pitch(&entry);
+            let row = rect(menu.left + 5.0, row_top, menu.right - 5.0, row_top + step);
+            match entry {
+                Entry::Header(label) => {
+                    self.text(
+                        &self.shorten(label, &self.caption, row.right - row.left - 24.0),
+                        rect(row.left + 12.0, row.top, row.right - 12.0, row.bottom),
+                        &self.caption.clone(),
+                        self.palette.muted,
+                    )?;
                 }
-                row_top += step;
+                Entry::Rule => {
+                    let middle = (row.top + row.bottom) / 2.0;
+                    self.fill(
+                        rect(row.left + 11.0, middle, row.right - 11.0, middle + 1.0),
+                        self.palette.hairline,
+                        0.0,
+                    )?;
+                }
+                Entry::Row(label, action, dangerous) => {
+                    self.context_menu_row(row, label, action, dangerous)?;
+                }
             }
-            Ok(())
-        })
+            row_top += step;
+        }
+        Ok(())
     }
 
     fn context_menu_row(
@@ -5385,8 +5405,7 @@ impl Renderer {
         )
     }
 
-    /// Leech's panel: a dimmed stage, the plate settling in from 97 %, a click
-    /// outside dismisses it.
+    /// Leech's panel: a dimmed stage and the plate on it; a click outside dismisses it.
     #[allow(clippy::too_many_arguments)]
     fn plate(
         &mut self,
@@ -5398,16 +5417,7 @@ impl Renderer {
         body: impl FnOnce(&mut Self, LogicalRect) -> Result<(), String>,
     ) -> Result<(), String> {
         let overlay = rect(0.0, 0.0, width, height);
-        let now = Instant::now();
-        let reduced = self.reduced_motion;
-        let motion = self
-            .toggle_motions
-            .entry("plate")
-            .or_insert_with(|| crate::motion::Motion::new(0.0));
-        motion.retarget(1.0, now, reduced);
-        let progress = motion.value(now).clamp(0.0, 1.0);
-        self.navigation_was_moving |= motion.active(now);
-        self.fill_alpha(overlay, 0x000000, 0.38 * progress, 0.0)?;
+        self.fill_alpha(overlay, 0x000000, 0.38, 0.0)?;
         self.hits.push(HitRegion {
             rect: overlay,
             action: dismiss,
@@ -5420,15 +5430,8 @@ impl Renderer {
             rect: modal,
             action: Action::Ignore,
         });
-        let center = Vector2 {
-            X: (modal.left + modal.right) / 2.0,
-            Y: (modal.top + modal.bottom) / 2.0,
-        };
-        // the plate travels only 3 %, less than a popover, so it reads as appearing in place
-        self.with_arrival(center, 0.5 + 0.5 * progress, |renderer| {
-            renderer.plate_surface(modal)?;
-            body(renderer, modal)
-        })
+        self.plate_surface(modal)?;
+        body(self, modal)
     }
 
     /// The plate's foot: a hairline and the actions on the right, the default last.
@@ -6071,6 +6074,7 @@ impl Renderer {
         destination: LogicalRect,
         radius: f32,
     ) -> Result<bool, String> {
+        self.painted.insert(path.to_path_buf());
         if !self.thumbnails.contains_key(path) && !self.unavailable_thumbnails.contains(path) {
             match self.load_thumbnail(path) {
                 Ok(bitmap) => {
@@ -6363,14 +6367,15 @@ fn folder_column_overflow_in(rows: LogicalRect, entries: &[FolderEntry]) -> f32 
 }
 
 pub fn folder_column_overflow(model: &UiModel, width: f32, height: f32) -> f32 {
-    if model.page != Page::Collections {
+    let column_width = folder_column_width(model);
+    if model.page != Page::Collections || column_width == 0.0 {
         return 0.0;
     }
     let left = sidebar_width(model.sidebar_collapsed) + CONTENT_PADDING;
     let rows = rect(
         left,
-        content_top() + LIBRARY_BODY_OFFSET,
-        (left + FOLDER_COLUMN_WIDTH).min(width),
+        content_top() + LIBRARY_BODY_OFFSET + FOLDER_SEARCH_HEIGHT,
+        (left + column_width).min(width),
         content_bottom(height, true),
     );
     folder_column_overflow_in(rows, &folder_entries(model))
@@ -6379,7 +6384,38 @@ pub fn folder_column_overflow(model: &UiModel, width: f32, height: f32) -> f32 {
 /// True while the pointer sits over the collections folder column.
 pub fn folder_column_contains(model: &UiModel, x: f32) -> bool {
     model.page == Page::Collections
-        && x < sidebar_width(model.sidebar_collapsed) + CONTENT_PADDING + FOLDER_COLUMN_WIDTH
+        && x < sidebar_width(model.sidebar_collapsed) + CONTENT_PADDING + folder_column_width(model)
+}
+
+/// The collections column as dragged, or nothing while it is folded away.
+pub fn folder_column_width(model: &UiModel) -> f32 {
+    let appearance = &model.config.appearance;
+    if appearance.folders_collapsed {
+        return 0.0;
+    }
+    appearance
+        .folder_width
+        .map_or(FOLDER_COLUMN_WIDTH, f32::from)
+        .clamp(FOLDER_COLUMN_MIN, FOLDER_COLUMN_MAX)
+}
+
+/// Where the clips start on the collections page, right of the column and its divider.
+fn folder_area_left(model: &UiModel, left: f32) -> f32 {
+    let width = folder_column_width(model);
+    if width > 0.0 {
+        left + width + 12.0 + FOLDER_COLUMN_GAP
+    } else {
+        left
+    }
+}
+
+/// The column width a divider dragged to `x` asks for.
+pub fn folder_width_at(model: &UiModel, x: f32) -> u16 {
+    let left = sidebar_width(model.sidebar_collapsed) + CONTENT_PADDING;
+    // the divider sits 12 px right of the column's edge
+    (x - 12.0 - left)
+        .clamp(FOLDER_COLUMN_MIN, FOLDER_COLUMN_MAX)
+        .round() as u16
 }
 
 pub fn clips_overflow(model: &UiModel, width: f32, height: f32) -> f32 {
@@ -6401,7 +6437,7 @@ pub fn clips_overflow(model: &UiModel, width: f32, height: f32) -> f32 {
     let mut left = sidebar_width(model.sidebar_collapsed) + CONTENT_PADDING;
     let mut top = content_top() + LIBRARY_BODY_OFFSET;
     if collections {
-        left += FOLDER_COLUMN_WIDTH + 12.0 + FOLDER_COLUMN_GAP;
+        left = folder_area_left(model, left);
         top = content_top() + LIBRARY_BODY_OFFSET + 34.0;
     }
     let area_width = width - CONTENT_PADDING - left - CLIP_SCROLL_RESERVE;

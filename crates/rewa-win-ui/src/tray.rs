@@ -13,10 +13,10 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
     DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW,
-    HMENU, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, SetTimer, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_RIGHTBUTTON,
-    TrackPopupMenu, TranslateMessage, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_DESTROY,
-    WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
+    HMENU, KillTimer, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, TPM_BOTTOMALIGN,
+    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WINDOW_STYLE, WM_APP, WM_COMMAND,
+    WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
     WS_EX_TOOLWINDOW,
 };
 use windows::core::{PCWSTR, w};
@@ -24,6 +24,7 @@ use windows::core::{PCWSTR, w};
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_ID: u32 = 1;
 const STATUS_TIMER: usize = 1;
+const TOAST_TIMER: usize = 2;
 const STATUS_TIMER_INTERVAL_MS: u32 = 5_000;
 const RECOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const COMMAND_OPEN_APP: usize = 99;
@@ -43,6 +44,7 @@ struct AppState {
     icon_added: bool,
     recovery: crate::recovery::RecoveryThrottle,
     strings: &'static crate::text::Strings,
+    toast: Option<crate::toast::Toast>,
 }
 
 fn taskbar_created_message() -> u32 {
@@ -92,6 +94,11 @@ pub fn run() -> Result<(), String> {
         icon_added: false,
         recovery: crate::recovery::RecoveryThrottle::new(Instant::now()),
         strings: load_strings(),
+        toast: crate::toast::Toast::new()
+            .inspect_err(|error| {
+                rewa_core::diagnostic!("Rewa tray: no on-screen clip note: {error}")
+            })
+            .ok(),
     });
     let state = Box::into_raw(state);
     let window = unsafe {
@@ -165,7 +172,16 @@ unsafe extern "system" fn window_proc(
 
     match message {
         rewa_windows::feedback::CLIP_SAVED_MESSAGE => {
-            rewa_windows::feedback::play_clip_saved_sound();
+            announce_clip_saved(window);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == TOAST_TIMER => {
+            let fading = state_mut(window)
+                .and_then(|state| state.toast.as_mut())
+                .is_some_and(crate::toast::Toast::tick);
+            if !fading {
+                let _ = unsafe { KillTimer(Some(window), TOAST_TIMER) };
+            }
             LRESULT(0)
         }
         WM_COMMAND => {
@@ -208,7 +224,7 @@ fn handle_command(window: HWND, command: usize) {
         }
         COMMAND_SAVE => match send(Request::Save) {
             Ok(Response::Saved { path: _ }) => {
-                rewa_windows::feedback::play_clip_saved_sound();
+                announce_clip_saved(window);
                 rewa_windows::feedback::notify_app_clip_saved();
             }
             Ok(Response::Error { message }) | Err(message) => notify_error(window, &message),
@@ -244,6 +260,39 @@ fn handle_command(window: HWND, command: usize) {
         _ => {}
     }
     refresh_status(window);
+}
+
+/// The card at the top right tells the player the save worked, then the chime.
+fn announce_clip_saved(window: HWND) {
+    if let Some(state) = state_mut(window)
+        && let Some(toast) = state.toast.as_mut()
+    {
+        let detail = newest_clip_line(&state.paths);
+        match toast.show(state.strings.toast_saved, &detail) {
+            Ok(()) => {
+                unsafe { SetTimer(Some(window), TOAST_TIMER, 30, None) };
+            }
+            Err(error) => rewa_core::diagnostic!("Rewa tray: cannot show the clip note: {error}"),
+        }
+    }
+    rewa_windows::feedback::play_clip_saved_sound();
+}
+
+/// "Clip 12 · VALORANT": the newest clip and, when it knows it, its game.
+fn newest_clip_line(paths: &AppPaths) -> String {
+    let Ok(config) = rewa_core::config::Config::load(paths) else {
+        return String::new();
+    };
+    let Some(clip) = rewa_core::clips::scan(&config.storage.directory)
+        .ok()
+        .and_then(|clips| clips.into_iter().next())
+    else {
+        return String::new();
+    };
+    match rewa_windows::game::clip_game(&clip.path) {
+        Some(game) => format!("{} · {game}", clip.title),
+        None => clip.title,
+    }
 }
 
 fn handle_simple(window: HWND, request: Request) {

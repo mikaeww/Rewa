@@ -247,6 +247,8 @@ pub enum Action {
     CancelDelete,
     ConfirmDelete,
     SelectCollection(Option<usize>),
+    ToggleFolderColumn,
+    DragFolderDivider,
     /// A game from `UiModel::games`, shown like a collection.
     SelectGame(usize),
     PreviousClip,

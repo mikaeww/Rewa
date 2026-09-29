@@ -14,7 +14,8 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, ClientToScreen, EndPaint, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO,
-    MonitorFromWindow, PAINTSTRUCT, ScreenToClient, UpdateWindow,
+    MonitorFromWindow, PAINTSTRUCT, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
+    RDW_UPDATENOW, RedrawWindow, ScreenToClient, UpdateWindow,
 };
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
@@ -33,16 +34,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
     DestroyWindow, DispatchMessageW, FindWindowW, GWL_STYLE, GWLP_USERDATA, GetClientRect,
-    GetCursorPos, GetMessageW, GetParent, GetWindowLongPtrW, GetWindowPlacement, HWND_TOP,
-    IDC_ARROW, IsIconic, IsZoomed, LoadCursorW, MINMAXINFO, MSG, PostQuitMessage, RegisterClassW,
-    SIZE_MINIMIZED, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetTimer,
-    SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, TranslateMessage,
-    WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CHAR, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO,
-    WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCCREATE, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-    WM_TIMER, WNDCLASSW, WS_CHILD, WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    GetCursorPos, GetMessageW, GetParent, GetWindowLongPtrW, GetWindowPlacement, HTCLIENT,
+    HWND_TOP, IDC_ARROW, IDC_SIZEWE, IsIconic, IsZoomed, LoadCursorW, MINMAXINFO, MSG,
+    PostQuitMessage, RegisterClassW, SIZE_MINIMIZED, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW,
+    SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
+    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CHAR, WM_DESTROY,
+    WM_DPICHANGED, WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETREDRAW, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_CHILD,
+    WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -56,8 +57,9 @@ use crate::player::{PLAYER_EVENT, Player};
 use crate::renderer::{
     FULLSCREEN_HEADER_HEIGHT, Renderer, clips_overflow, editor_player_bounds,
     editor_timeline_fraction, editor_timeline_rail, folder_column_contains, folder_column_overflow,
-    fullscreen_timeline_rail, fullscreen_volume_rail, player_bounds, player_timeline_rail,
-    player_volume_rail, settings_audio_gain_rail, settings_gain_percent,
+    folder_width_at, fullscreen_picture, fullscreen_timeline_rail, fullscreen_volume_rail,
+    player_bounds, player_timeline_rail, player_volume_rail, settings_audio_gain_rail,
+    settings_gain_percent,
 };
 use rewa_windows::meter::{MicrophoneMeter, MicrophoneProbe};
 
@@ -143,6 +145,7 @@ enum SliderDrag {
     PlayerSeek,
     PlayerVolume,
     EditorPlayhead,
+    FolderColumn,
     FullscreenSeek,
     FullscreenVolume,
 }
@@ -403,6 +406,18 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_NCHITTEST => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+        WM_SETCURSOR
+            if low_word(lparam.0) as u32 == HTCLIENT
+                && state_mut(window).is_some_and(|state| {
+                    matches!(state.slider_drag, Some(SliderDrag::FolderColumn))
+                        || state.renderer.hovered() == Some(&Action::DragFolderDivider)
+                }) =>
+        {
+            if let Ok(cursor) = unsafe { LoadCursorW(None, IDC_SIZEWE) } {
+                unsafe { SetCursor(Some(cursor)) };
+            }
+            LRESULT(1)
+        }
         WM_SIZE => {
             if let Some(state) = state_mut(window) {
                 if wparam.0 as u32 == SIZE_MINIMIZED {
@@ -566,6 +581,7 @@ unsafe extern "system" fn window_proc(
                     Some(Action::DragPlayerSeek) => Some(SliderDrag::PlayerSeek),
                     Some(Action::DragPlayerVolume) => Some(SliderDrag::PlayerVolume),
                     Some(Action::DragEditorPlayhead) => Some(SliderDrag::EditorPlayhead),
+                    Some(Action::DragFolderDivider) => Some(SliderDrag::FolderColumn),
                     _ => None,
                 };
                 state.text_drag = match hit.as_ref() {
@@ -718,6 +734,9 @@ unsafe extern "system" fn window_proc(
                     redraw(window);
                 } else if state.slider_drag.is_some() {
                     update_slider_drag(state, x, y, true);
+                    if matches!(state.slider_drag, Some(SliderDrag::FolderColumn)) {
+                        persist_appearance(&mut state.model);
+                    }
                     state.slider_drag = None;
                     let _ = unsafe { ReleaseCapture() };
                     redraw(window);
@@ -1044,11 +1063,17 @@ unsafe extern "system" fn fullscreen_controls_proc(
                 let scale = state.dpi as f32 / 96.0;
                 let width = ((client.right.max(0) as f32 / scale).round() as u32).max(1);
                 let height = ((client.bottom.max(0) as f32 / scale).round() as u32).max(1);
+                let picture = fullscreen_picture(
+                    &state.model,
+                    ((state.width as f32 / scale).round() as u32).max(1),
+                    ((state.height as f32 / scale).round() as u32).max(1),
+                );
                 let _ = state.fullscreen_renderer.paint_fullscreen_controls(
                     window,
                     &state.model,
                     width,
                     height,
+                    picture,
                 );
             }
             let _ = unsafe { EndPaint(window, &paint) };
@@ -1438,6 +1463,13 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
             confirm_delete(&mut state.model);
             update_player_window(state);
         }
+        Action::ToggleFolderColumn => {
+            let appearance = &mut state.model.config.appearance;
+            appearance.folders_collapsed = !appearance.folders_collapsed;
+            state.model.folder_scroll = 0.0;
+            persist_appearance(&mut state.model);
+        }
+        Action::DragFolderDivider => {}
         Action::SelectGame(index) => {
             state.model.active_collection = None;
             state.model.active_game = state.model.games().into_iter().nth(index);
@@ -1602,7 +1634,7 @@ fn poll_trim_updates(state: &mut AppState) -> bool {
             } if active.as_ref() == Some(&source) => {
                 changed = true;
                 state.model.editor_working = false;
-                let replaced_successfully = match result {
+                let succeeded = match result {
                     Ok(report) => {
                         // a cut is a new file and a replacement a renamed one; both lose the stream
                         if let Some(game) = state.model.clip_games.get(&source)
@@ -1610,14 +1642,10 @@ fn poll_trim_updates(state: &mut AppState) -> bool {
                         {
                             rewa_core::diagnostic!("Rewa trim: cannot keep the game note: {error}");
                         }
-                        let result = state.model.refresh();
-                        if result.is_ok() && state.model.page == crate::model::Page::Editor {
-                            state.model.active_clip = state
-                                .model
-                                .clips
-                                .iter()
-                                .position(|clip| clip.path == source);
+                        if replacing {
+                            state.renderer.forget_clip(&source);
                         }
+                        let result = state.model.refresh();
                         if result.is_ok() {
                             state.renderer.retry_unavailable_thumbnails();
                         }
@@ -1636,7 +1664,7 @@ fn poll_trim_updates(state: &mut AppState) -> bool {
                             }
                         );
                         set_result(&mut state.model, result, &message);
-                        replacing
+                        true
                     }
                     Err(error) => {
                         state.model.notice = Some(format!(
@@ -1646,11 +1674,13 @@ fn poll_trim_updates(state: &mut AppState) -> bool {
                         false
                     }
                 };
-                if replacing {
+                if succeeded && state.model.page == crate::model::Page::Editor {
+                    // a finished cut is done with: back to the clips, where the result sits
+                    stop_player(state);
+                    state.model.navigate(crate::model::Page::Library);
+                    update_player_window(state);
+                } else if replacing && !succeeded {
                     open_current_clip(state);
-                    if replaced_successfully && state.model.page == crate::model::Page::Editor {
-                        begin_editor(state);
-                    }
                 }
             }
             _ => {}
@@ -2207,8 +2237,9 @@ fn update_clip_drag(window: HWND, state: &mut AppState, x: f32, y: f32) {
     let scale = state.dpi as f32 / 96.0;
     let inside =
         x >= 0.0 && y >= 0.0 && x < state.width as f32 / scale && y < state.height as f32 / scale;
-    // collections keep their own folder drop; anywhere else a drag carries the files out
-    if state.model.page != crate::model::Page::Collections || !inside {
+    // inside the window the drag stays Rewa's own light chip; the shell's drag loop,
+    // with its heavy image, only takes over once the clip leaves for another program
+    if !inside {
         let paths = dragged_clip_paths(&state.model, clip);
         drag_clips_out(window, state, &paths);
         return;
@@ -2450,6 +2481,9 @@ fn update_slider_drag(state: &mut AppState, x: f32, y: f32, settle: bool) {
                 .min(state.model.editor_end);
             seek_editor_preview(state, position, settle);
         }
+        SliderDrag::FolderColumn => {
+            state.model.config.appearance.folder_width = Some(folder_width_at(&state.model, x));
+        }
         SliderDrag::FullscreenSeek | SliderDrag::FullscreenVolume => {}
     }
 }
@@ -2460,7 +2494,8 @@ fn update_fullscreen_slider_drag(state: &mut AppState, x: f32, y: f32, settle: b
     let height = FULLSCREEN_CONTROLS_HEIGHT.round() as u32;
     match state.slider_drag {
         Some(SliderDrag::FullscreenSeek) => {
-            let rail = fullscreen_timeline_rail(width, height);
+            let main_height = ((state.height as f32 / scale).round() as u32).max(1);
+            let rail = fullscreen_timeline_rail(&state.model, width, main_height, height as f32);
             let fraction = ((x - rail.left) / (rail.right - rail.left).max(1.0)).clamp(0.0, 1.0);
             let fraction = f64::from(fraction);
             state.model.player_position_seconds = state.model.player_duration_seconds * fraction;
@@ -2739,6 +2774,7 @@ fn toggle_player_fullscreen(window: HWND, state: &mut AppState) {
     let style = unsafe { GetWindowLongPtrW(window, GWL_STYLE) };
     state.fullscreen = Some(FullscreenState { style, placement });
     let fullscreen_style = (style as u32 & !WS_OVERLAPPEDWINDOW.0) | WS_POPUP.0 | WS_VISIBLE.0;
+    let _repaint = RepaintOnce::hold(window);
     unsafe {
         SetWindowLongPtrW(window, GWL_STYLE, fullscreen_style as isize);
         let monitor = monitor_info.rcMonitor;
@@ -2770,6 +2806,7 @@ fn exit_player_fullscreen(window: HWND, state: &mut AppState) {
             let _ = ShowWindow(overlay, SW_HIDE);
         }
     }
+    let _repaint = RepaintOnce::hold(window);
     unsafe {
         SetWindowLongPtrW(window, GWL_STYLE, fullscreen.style);
         let _ = SetWindowPlacement(window, &fullscreen.placement);
@@ -2784,6 +2821,31 @@ fn exit_player_fullscreen(window: HWND, state: &mut AppState) {
         );
     }
     update_player_window(state);
+}
+
+/// Holds painting while the window changes frame, size and child placement, then
+/// paints the finished state once, so a fullscreen switch shows no halfway frames.
+struct RepaintOnce(HWND);
+
+impl RepaintOnce {
+    fn hold(window: HWND) -> Self {
+        unsafe { SendMessageW(window, WM_SETREDRAW, Some(WPARAM(0)), Some(LPARAM(0))) };
+        Self(window)
+    }
+}
+
+impl Drop for RepaintOnce {
+    fn drop(&mut self) {
+        unsafe {
+            SendMessageW(self.0, WM_SETREDRAW, Some(WPARAM(1)), Some(LPARAM(0)));
+            let _ = RedrawWindow(
+                Some(self.0),
+                None,
+                None,
+                RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+        }
+    }
 }
 
 fn expire_notice(state: &mut AppState) -> bool {

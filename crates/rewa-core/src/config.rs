@@ -27,6 +27,9 @@ pub struct AppearanceConfig {
     pub hover_strength: HoverStrength,
     pub language: Language,
     pub library_view: LibraryView,
+    /// Width the collections column was dragged to; none keeps the default.
+    pub folder_width: Option<u16>,
+    pub folders_collapsed: bool,
 }
 
 /// How the clips page lays out its clips; remembered across starts.
@@ -459,6 +462,16 @@ duration_seconds = 30
     }
 
     #[test]
+    fn a_default_collections_column_survives_a_save() {
+        let encoded =
+            toml::to_string_pretty(&Config::default()).expect("the default configuration encodes");
+        let decoded: Config = toml::from_str(&encoded).expect("and decodes again");
+
+        assert_eq!(decoded.appearance.folder_width, None);
+        assert!(!decoded.appearance.folders_collapsed);
+    }
+
+    #[test]
     fn a_retired_library_view_reads_as_the_grid() {
         let config: Config = toml::from_str("[appearance]\nlibrary_view = \"list\"\n")
             .expect("an unknown view still parses");
@@ -473,6 +486,8 @@ duration_seconds = 30
         config.appearance.hover = HoverStyle::Outline;
         config.appearance.hover_strength = HoverStrength::Strong;
         config.appearance.library_view = LibraryView::Compact;
+        config.appearance.folder_width = Some(300);
+        config.appearance.folders_collapsed = true;
 
         let encoded = toml::to_string_pretty(&config).expect("configuration encodes");
         assert!(encoded.contains("theme = \"cafe\""));
