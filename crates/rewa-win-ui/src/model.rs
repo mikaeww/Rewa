@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use rewa_core::clips::{self, Clip, Collection};
-use rewa_core::config::{Config, HoverStrength, HoverStyle, Language, Theme};
+use rewa_core::config::{Config, HoverStrength, HoverStyle, Language, LibraryView, Theme};
 use rewa_core::favorites::Favorites;
 use rewa_core::ipc::DaemonState;
 use rewa_core::paths::AppPaths;
@@ -166,6 +166,7 @@ pub enum SettingsSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Navigate(Page),
+    Home,
     SettingsSection(SettingsSection),
     CancelPrompt,
     ConfirmPrompt,
@@ -173,7 +174,7 @@ pub enum Action {
     OpenClipMenu(usize),
     Back,
     Refresh,
-    SetLibraryGrid(bool),
+    SetLibraryView(LibraryView),
     SetClipTab(ClipTab),
     Ignore,
     ToggleFilterPanel,
@@ -190,7 +191,6 @@ pub enum Action {
     ChooseLanguage,
     ChooseHoverStyle,
     ChooseHoverStrength,
-    ToggleCollectionSort,
     SaveReplay,
     OpenClipsFolder,
     Search,
@@ -202,8 +202,12 @@ pub enum Action {
     RenameClip(usize),
     ToggleFavorite(usize),
     OpenClipExternally(usize),
+    ShowClipInExplorer(usize),
     RenameActiveClip,
-    MoveClipToCollection { clip: usize, collection: usize },
+    MoveClipToCollection {
+        clip: usize,
+        collection: usize,
+    },
     ToggleSelectionMode,
     ToggleClipSelection(usize),
     SelectAllVisibleClips,
@@ -243,6 +247,8 @@ pub enum Action {
     CancelDelete,
     ConfirmDelete,
     SelectCollection(Option<usize>),
+    /// A game from `UiModel::games`, shown like a collection.
+    SelectGame(usize),
     PreviousClip,
     NextClip,
     PlayPause,
@@ -636,13 +642,13 @@ pub struct UiModel {
     pub search: TextInput,
     pub search_focused: bool,
     pub clips_oldest_first: bool,
-    pub library_grid: bool,
     pub clip_tab: ClipTab,
     pub sidebar_collapsed: bool,
     pub filter_panel_open: bool,
     pub capture_panel_open: bool,
     pub filter_time: TimeFilter,
     pub filter_collection: Option<PathBuf>,
+    pub clip_games: HashMap<PathBuf, String>,
     pub filter_type: TypeFilter,
     pub filter_size: SizeFilter,
     pub library_scroll: f32,
@@ -654,9 +660,9 @@ pub struct UiModel {
     pub microphone_peak_hold: u8,
     pub microphone_test: bool,
     pub microphone_signal: bool,
-    pub collections_descending: bool,
     pub context_menu: Option<ClipContextMenu>,
     pub active_collection: Option<PathBuf>,
+    pub active_game: Option<String>,
     pub active_clip: Option<usize>,
     pub selection_mode: bool,
     pub selected_clips: HashSet<PathBuf>,
@@ -733,13 +739,13 @@ impl UiModel {
             search: TextInput::new(String::new(), PROMPT_MAX_CHARACTERS),
             search_focused: false,
             clips_oldest_first: false,
-            library_grid: true,
             clip_tab: ClipTab::All,
             sidebar_collapsed: false,
             filter_panel_open: false,
             capture_panel_open: false,
             filter_time: TimeFilter::All,
             filter_collection: None,
+            clip_games: HashMap::new(),
             filter_type: TypeFilter::All,
             filter_size: SizeFilter::All,
             library_scroll: 0.0,
@@ -751,9 +757,9 @@ impl UiModel {
             microphone_peak_hold: 0,
             microphone_test: false,
             microphone_signal: false,
-            collections_descending: false,
             context_menu: None,
             active_collection: None,
+            active_game: None,
             active_clip: None,
             selection_mode: false,
             selected_clips: HashSet::new(),
@@ -810,6 +816,24 @@ impl UiModel {
         }
         self.selected_clips
             .retain(|path| self.clips.iter().any(|clip| &clip.path == path));
+        // ponytail: one stream read per clip and refresh; cache by mtime at thousands of clips
+        self.clip_games = self
+            .clips
+            .iter()
+            .filter_map(|clip| {
+                Some((
+                    clip.path.clone(),
+                    rewa_windows::game::clip_game(&clip.path)?,
+                ))
+            })
+            .collect();
+        if self
+            .active_game
+            .as_ref()
+            .is_some_and(|game| !self.clip_games.values().any(|value| value == game))
+        {
+            self.active_game = None;
+        }
         self.favorites.set_root(&self.config.storage.directory);
         // an unavailable clip folder scans as empty; pruning then would wipe the
         // whole list, so only prune what a readable folder tells us
@@ -1149,9 +1173,12 @@ impl UiModel {
                 .enumerate()
                 .filter(|(_, clip)| {
                     let in_collection = !collection_scope
-                        || self.active_collection.as_ref().is_none_or(|collection| {
+                        || (self.active_collection.as_ref().is_none_or(|collection| {
                             clip.path.parent() == Some(collection.as_path())
-                        });
+                        }) && self
+                            .active_game
+                            .as_ref()
+                            .is_none_or(|game| self.clip_games.get(&clip.path) == Some(game)));
                     let matches_query = query.is_empty()
                         || clip.title.to_ascii_lowercase().contains(&query)
                         || clip.path.file_name().is_some_and(|name| {
@@ -1186,10 +1213,17 @@ impl UiModel {
                 .to_ascii_lowercase()
                 .cmp(&self.collections[*right].name.to_ascii_lowercase())
         });
-        if self.collections_descending {
-            visible.reverse();
-        }
         visible
+    }
+
+    /// Games that match the collections search, in the order `games` lists them.
+    pub fn visible_games(&self) -> Vec<(usize, String)> {
+        let query = self.search.value.trim().to_lowercase();
+        self.games()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, game)| query.is_empty() || game.to_lowercase().contains(&query))
+            .collect()
     }
 
     fn passes_clip_filters(&self, clip: &Clip, today: Civil) -> bool {
@@ -1204,6 +1238,17 @@ impl UiModel {
         self.filter_time.keeps(clock::local(clip.modified), today)
             && self.filter_type.keeps(clip)
             && self.filter_size.keeps(clip.size_bytes)
+    }
+
+    /// Day sections for the normal grid; the compact grid is one block without dates.
+    pub fn clip_groups(&self, indices: &[usize], today: Civil) -> Vec<ClipGroup> {
+        if self.config.appearance.library_view == LibraryView::Compact {
+            return vec![ClipGroup {
+                label: String::new(),
+                indices: indices.to_vec(),
+            }];
+        }
+        self.clip_day_groups(indices, today)
     }
 
     pub fn clip_day_groups(&self, indices: &[usize], today: Civil) -> Vec<ClipGroup> {
@@ -1334,6 +1379,19 @@ impl UiModel {
                     .find(|collection| &collection.path == path)
             })
             .map_or(self.strings().all, |collection| collection.name.as_str())
+    }
+
+    /// Every game a clip was recorded in, for the filter menu.
+    pub fn games(&self) -> Vec<String> {
+        let mut games = self
+            .clip_games
+            .values()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        games.sort_by_key(|game| game.to_lowercase());
+        games
     }
 
     pub fn sort_label(&self) -> &'static str {
@@ -1515,13 +1573,13 @@ mod tests {
             search: TextInput::new(String::new(), PROMPT_MAX_CHARACTERS),
             search_focused: false,
             clips_oldest_first: false,
-            library_grid: true,
             clip_tab: ClipTab::All,
             sidebar_collapsed: false,
             filter_panel_open: false,
             capture_panel_open: false,
             filter_time: TimeFilter::All,
             filter_collection: None,
+            clip_games: HashMap::new(),
             filter_type: TypeFilter::All,
             filter_size: SizeFilter::All,
             library_scroll: 0.0,
@@ -1536,9 +1594,9 @@ mod tests {
             microphone_peak_hold: 0,
             microphone_test: false,
             microphone_signal: false,
-            collections_descending: false,
             context_menu: None,
             active_collection: None,
+            active_game: None,
             active_clip: None,
             selection_mode: false,
             selected_clips: HashSet::new(),
@@ -1579,6 +1637,33 @@ mod tests {
             editor_working: false,
             trim_replace_original: false,
         }
+    }
+
+    #[test]
+    fn a_game_on_the_collections_page_shows_only_its_clips() {
+        let mut model = model();
+        model
+            .clip_games
+            .insert(PathBuf::from("/clips/other.mp4"), "VALORANT".into());
+        assert_eq!(model.games(), vec!["VALORANT".to_owned()]);
+
+        model.page = Page::Collections;
+        model.active_game = Some("VALORANT".into());
+        assert_eq!(model.visible_clip_indices(10), vec![1]);
+
+        model.page = Page::Library;
+        assert_eq!(model.visible_clip_indices(10), vec![0, 1]);
+    }
+
+    #[test]
+    fn the_compact_view_drops_the_day_sections() {
+        let mut model = model();
+        model.config.appearance.library_view = LibraryView::Compact;
+        let groups = model.clip_groups(&[0, 1], clock::now());
+
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].label.is_empty());
+        assert_eq!(groups[0].indices, vec![0, 1]);
     }
 
     #[test]

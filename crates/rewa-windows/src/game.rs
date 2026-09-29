@@ -226,6 +226,33 @@ pub fn display_name(title: &str, executable: &str) -> String {
     }
 }
 
+/// The recorded game rides along as an NTFS stream, so renames and moves keep it.
+/// ponytail: lost once a clip leaves NTFS; a sidecar index would survive that but
+/// has to follow every rename, move and delete.
+#[cfg(target_os = "windows")]
+pub fn tag_clip(clip: &std::path::Path, game: &str) -> std::io::Result<()> {
+    std::fs::write(game_stream(clip), game)
+}
+
+#[cfg(target_os = "windows")]
+pub fn clip_game(clip: &std::path::Path) -> Option<String> {
+    let game = std::fs::read_to_string(game_stream(clip)).ok()?;
+    let game = game.trim();
+    (!game.is_empty()).then(|| game.to_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn clip_game(_clip: &std::path::Path) -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn game_stream(clip: &std::path::Path) -> std::path::PathBuf {
+    let mut stream = clip.as_os_str().to_owned();
+    stream.push(":rewa.game");
+    stream.into()
+}
+
 #[cfg(any(target_os = "windows", test))]
 pub fn covers_monitor(window: &WindowFacts) -> bool {
     if window.monitor_width == 0 || window.monitor_height == 0 {

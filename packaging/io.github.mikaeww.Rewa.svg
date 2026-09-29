@@ -1,12 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <g stroke="#111318" stroke-width="17">
-      <path d="M42 25H25v17M86 25h17v17M42 103H25V86M86 103h17V86"/>
-      <path d="M51 45v38M77 45v38"/>
-    </g>
-    <g stroke="#f7f7f7" stroke-width="10">
-      <path d="M42 25H25v17M86 25h17v17M42 103H25V86M86 103h17V86"/>
-      <path d="M51 45v38M77 45v38"/>
-    </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="96" fill="#0b0b0c"/>
+  <path fill="#ffffff" d="M520 200
+    C600 196 650 232 670 302
+    C690 380 700 468 708 552
+    C752 548 808 572 810 620
+    C812 662 774 680 734 654
+    C744 716 750 770 744 808
+    C742 828 730 836 712 838
+    C620 848 480 850 408 842
+    C388 840 378 830 376 810
+    C370 766 366 720 362 676
+    C314 698 240 688 234 636
+    C228 584 294 548 352 560
+    C352 452 362 352 386 290
+    C410 226 460 204 520 200Z"/>
+  <g fill="#ff9ec7" opacity="0.7">
+    <ellipse cx="428" cy="526" rx="34" ry="18"/>
+    <ellipse cx="632" cy="522" rx="34" ry="18"/>
+  </g>
+  <g fill="none" stroke="#0b0b0c" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M438 418 Q468 436 494 454 Q470 472 442 492"/>
+    <path d="M614 414 Q584 434 560 450 Q584 468 610 490"/>
+    <path d="M490 540 Q522 543 558 539"/>
   </g>
 </svg>

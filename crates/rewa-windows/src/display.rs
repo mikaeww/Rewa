@@ -7,15 +7,17 @@ pub struct DisplayTarget {
     pub primary: bool,
 }
 
+/// Windows renumbers `\\.\DISPLAYn` after a driver update or replug, so a
+/// configured display that vanished falls back to the primary one instead of
+/// stopping capture, the way `resolve_monitor` does on Linux.
 pub fn choose_display_index(displays: &[DisplayTarget], configured: Option<&str>) -> Option<usize> {
-    if let Some(configured) = configured {
-        return displays
-            .iter()
-            .position(|display| display.name.eq_ignore_ascii_case(configured));
-    }
-    displays
-        .iter()
-        .position(|display| display.primary)
+    configured
+        .and_then(|configured| {
+            displays
+                .iter()
+                .position(|display| display.name.eq_ignore_ascii_case(configured))
+        })
+        .or_else(|| displays.iter().position(|display| display.primary))
         .or_else(|| (!displays.is_empty()).then_some(0))
 }
 
@@ -33,11 +35,16 @@ pub fn select_display(configured: Option<&str>) -> Result<NativeDisplay, crate::
         .map(|display| display.target.clone())
         .collect::<Vec<_>>();
     let index = choose_display_index(&targets, configured).ok_or_else(|| {
-        crate::video::VideoError::Initialization(match configured {
-            Some(name) => format!("configured Windows display was not found: {name}"),
-            None => "Windows reported no capture displays".into(),
-        })
+        crate::video::VideoError::Initialization("Windows reported no capture displays".into())
     })?;
+    if let Some(name) = configured
+        && !targets[index].name.eq_ignore_ascii_case(name)
+    {
+        rewa_core::diagnostic!(
+            "Rewa capture: configured display {name} is gone, recording {} instead",
+            targets[index].name
+        );
+    }
     Ok(displays
         .into_iter()
         .nth(index)
@@ -196,12 +203,19 @@ mod tests {
     }
 
     #[test]
-    fn configured_display_is_strict_and_case_insensitive() {
-        let displays = vec![display(r"\\.\DISPLAY1", true)];
+    fn a_vanished_configured_display_falls_back_to_the_primary_one() {
+        let displays = vec![
+            display(r"\\.\DISPLAY5", false),
+            display(r"\\.\DISPLAY6", true),
+        ];
         assert_eq!(
-            choose_display_index(&displays, Some(r"\\.\display1")),
+            choose_display_index(&displays, Some(r"\\.\display5")),
             Some(0)
         );
-        assert_eq!(choose_display_index(&displays, Some("missing")), None);
+        assert_eq!(
+            choose_display_index(&displays, Some(r"\\.\DISPLAY1")),
+            Some(1)
+        );
+        assert_eq!(choose_display_index(&[], Some(r"\\.\DISPLAY1")), None);
     }
 }

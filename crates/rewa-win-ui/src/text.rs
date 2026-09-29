@@ -44,6 +44,7 @@ pub struct Strings {
     pub reset: &'static str,
     pub filter_time: &'static str,
     pub filter_game: &'static str,
+    pub filter_collection: &'static str,
     pub filter_type: &'static str,
     pub filter_size: &'static str,
     pub filter_sort: &'static str,
@@ -74,6 +75,7 @@ pub struct Strings {
     pub favorite_add: &'static str,
     pub favorite_remove: &'static str,
     pub open_in_explorer: &'static str,
+    pub open_in_player: &'static str,
     pub edit_clip: &'static str,
     pub rename: &'static str,
     pub select_multiple: &'static str,
@@ -83,13 +85,12 @@ pub struct Strings {
     // collections page
     pub new_collection_button: &'static str,
     pub search_collections: &'static str,
-    pub folders_label: &'static str,
+    pub games_heading: &'static str,
+    pub collections_heading: &'static str,
     pub all_clips: &'static str,
     pub delete: &'static str,
     pub empty_collection: &'static str,
     pub no_collections: &'static str,
-    pub sort_ascending: &'static str,
-    pub sort_descending: &'static str,
     pub move_selected_to: &'static str,
 
     // settings page
@@ -145,6 +146,10 @@ pub struct Strings {
     pub primary_display: &'static str,
     pub hotkey_activating: &'static str,
     pub hotkey_prompt: &'static str,
+    pub hotkey_rule: &'static str,
+    pub hotkey_key_unusable: &'static str,
+    pub hotkey_next_start: &'static str,
+    pub hotkey_unbound: &'static str,
 
     // appearance values
     pub theme_dark: &'static str,
@@ -174,7 +179,10 @@ pub struct Strings {
     pub field_resolution: &'static str,
     pub loading: &'static str,
     pub editor_title: &'static str,
-    pub trimmed_duration: &'static str,
+    pub selection_heading: &'static str,
+    pub field_start: &'static str,
+    pub field_end: &'static str,
+    pub field_length: &'static str,
     pub save_as_new: &'static str,
     pub replace_original: &'static str,
     pub discard: &'static str,
@@ -245,6 +253,7 @@ pub struct Strings {
     pub notice_cannot_delete_collection: &'static str,
     pub notice_cannot_save_settings: &'static str,
     pub notice_cannot_move_clips: &'static str,
+    pub notice_cannot_drag: &'static str,
     pub notice_cannot_play: &'static str,
     pub notice_render_failed: &'static str,
     pub notice_folder_picker_failed: &'static str,
@@ -262,8 +271,6 @@ pub struct Strings {
 
     // units
     pub seconds_word: &'static str,
-    pub clip_singular: &'static str,
-    pub clip_plural: &'static str,
     pub months: [&'static str; 12],
 }
 
@@ -283,14 +290,6 @@ impl Strings {
         match self.language {
             Language::English => format!("{value} seconds buffered"),
             _ => format!("{value} Sekunden Puffer"),
-        }
-    }
-
-    pub fn clip_count(&self, count: usize) -> String {
-        if count == 1 {
-            format!("1 {}", self.clip_singular)
-        } else {
-            format!("{count} {}", self.clip_plural)
         }
     }
 
@@ -399,6 +398,7 @@ pub const GERMAN: Strings = Strings {
     reset: "Zurücksetzen",
     filter_time: "Zeitraum",
     filter_game: "Spiel",
+    filter_collection: "Sammlung",
     filter_type: "Typ",
     filter_size: "Größe",
     filter_sort: "Sortierung",
@@ -426,7 +426,8 @@ pub const GERMAN: Strings = Strings {
     clip_actions: "Clip-Aktionen",
     favorite_add: "Als Favorit merken",
     favorite_remove: "Favorit entfernen",
-    open_in_explorer: "Im Explorer öffnen",
+    open_in_explorer: "Im Explorer zeigen",
+    open_in_player: "Mit Medienwiedergabe öffnen",
     edit_clip: "Clip bearbeiten",
     rename: "Umbenennen",
     select_multiple: "Mehrere auswählen",
@@ -435,13 +436,12 @@ pub const GERMAN: Strings = Strings {
 
     new_collection_button: "Neue Sammlung",
     search_collections: "Sammlungen suchen...",
-    folders_label: "Ordner",
+    games_heading: "Spiele",
+    collections_heading: "Sammlungen",
     all_clips: "Alle Clips",
     delete: "Löschen",
     empty_collection: "Diese Sammlung ist leer",
     no_collections: "Noch keine Sammlungen",
-    sort_ascending: "A–Z",
-    sort_descending: "Z–A",
     move_selected_to: "Ausgewählte Clips verschieben nach",
 
     save: "Speichern",
@@ -496,6 +496,10 @@ pub const GERMAN: Strings = Strings {
     primary_display: "Primärer Bildschirm",
     hotkey_activating: "Aktivieren...",
     hotkey_prompt: "Tastenkombination drücken…",
+    hotkey_rule: "Strg oder Umschalt plus eine Taste, oder F1–F24 allein",
+    hotkey_key_unusable: "Diese Taste geht nicht als Hotkey",
+    hotkey_next_start: "Gespeichert, aktiv sobald die Aufnahme läuft",
+    hotkey_unbound: "Nicht belegt",
 
     theme_dark: "Dunkel",
     theme_light: "Hell",
@@ -523,7 +527,10 @@ pub const GERMAN: Strings = Strings {
     field_resolution: "Auflösung",
     loading: "Wird geladen",
     editor_title: "Clip bearbeiten",
-    trimmed_duration: "Geschnittene Dauer",
+    selection_heading: "Auswahl",
+    field_start: "Start",
+    field_end: "Ende",
+    field_length: "Länge",
     save_as_new: "Speichern als",
     replace_original: "Original ersetzen",
     discard: "Verwerfen",
@@ -591,6 +598,7 @@ pub const GERMAN: Strings = Strings {
     notice_cannot_delete_collection: "Sammlung konnte nicht gelöscht werden",
     notice_cannot_save_settings: "Einstellungen konnten nicht gespeichert werden",
     notice_cannot_move_clips: "Clips konnten nicht verschoben werden",
+    notice_cannot_drag: "Clip lässt sich nicht herausziehen",
     notice_cannot_play: "Dieser Clip lässt sich nicht abspielen",
     notice_render_failed: "Darstellung fehlgeschlagen",
     notice_folder_picker_failed: "Ordnerauswahl fehlgeschlagen",
@@ -607,8 +615,6 @@ pub const GERMAN: Strings = Strings {
     notice_player_unavailable: "Wiedergabe nicht verfügbar",
 
     seconds_word: "Sekunden",
-    clip_singular: "Clip",
-    clip_plural: "Clips",
     months: [
         "Januar",
         "Februar",
@@ -662,6 +668,7 @@ pub const ENGLISH: Strings = Strings {
     reset: "Reset",
     filter_time: "Time range",
     filter_game: "Game",
+    filter_collection: "Collection",
     filter_type: "Type",
     filter_size: "Size",
     filter_sort: "Sort",
@@ -690,6 +697,7 @@ pub const ENGLISH: Strings = Strings {
     favorite_add: "Add to favourites",
     favorite_remove: "Remove from favourites",
     open_in_explorer: "Show in Explorer",
+    open_in_player: "Open in media player",
     edit_clip: "Trim clip",
     rename: "Rename",
     select_multiple: "Select multiple",
@@ -698,13 +706,12 @@ pub const ENGLISH: Strings = Strings {
 
     new_collection_button: "New collection",
     search_collections: "Search collections...",
-    folders_label: "Folders",
+    games_heading: "Games",
+    collections_heading: "Collections",
     all_clips: "All clips",
     delete: "Delete",
     empty_collection: "This collection is empty",
     no_collections: "No collections yet",
-    sort_ascending: "A–Z",
-    sort_descending: "Z–A",
     move_selected_to: "Move selected clips to",
 
     save: "Save",
@@ -759,6 +766,10 @@ pub const ENGLISH: Strings = Strings {
     primary_display: "Primary display",
     hotkey_activating: "Activating...",
     hotkey_prompt: "Press a shortcut…",
+    hotkey_rule: "Ctrl or Shift plus one key, or F1–F24 alone",
+    hotkey_key_unusable: "That key cannot be a shortcut",
+    hotkey_next_start: "Saved, active once the recorder runs",
+    hotkey_unbound: "Not set",
 
     theme_dark: "Dark",
     theme_light: "Light",
@@ -786,7 +797,10 @@ pub const ENGLISH: Strings = Strings {
     field_resolution: "Resolution",
     loading: "Loading",
     editor_title: "Trim clip",
-    trimmed_duration: "Trimmed length",
+    selection_heading: "Selection",
+    field_start: "Start",
+    field_end: "End",
+    field_length: "Length",
     save_as_new: "Save as new",
     replace_original: "Replace original",
     discard: "Discard",
@@ -854,6 +868,7 @@ pub const ENGLISH: Strings = Strings {
     notice_cannot_delete_collection: "Cannot delete collection",
     notice_cannot_save_settings: "Cannot save settings",
     notice_cannot_move_clips: "Cannot move clips",
+    notice_cannot_drag: "Cannot drag the clip out",
     notice_cannot_play: "Cannot play this clip",
     notice_render_failed: "Rendering failed",
     notice_folder_picker_failed: "Folder picker failed",
@@ -870,8 +885,6 @@ pub const ENGLISH: Strings = Strings {
     notice_player_unavailable: "Playback unavailable",
 
     seconds_word: "seconds",
-    clip_singular: "clip",
-    clip_plural: "clips",
     months: [
         "January",
         "February",
@@ -936,10 +949,6 @@ mod tests {
 
     #[test]
     fn counted_phrases_follow_the_language_and_the_number() {
-        assert_eq!(GERMAN.clip_count(1), "1 Clip");
-        assert_eq!(GERMAN.clip_count(12), "12 Clips");
-        assert_eq!(ENGLISH.clip_count(1), "1 clip");
-        assert_eq!(ENGLISH.clip_count(12), "12 clips");
         assert_eq!(GERMAN.seconds(30), "30 Sekunden");
         assert_eq!(ENGLISH.seconds(30), "30 seconds");
         assert_eq!(ENGLISH.move_drag(1), "Move 1 clip");

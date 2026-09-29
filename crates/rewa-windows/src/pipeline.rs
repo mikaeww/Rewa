@@ -1171,6 +1171,7 @@ fn run_pipeline(
                 PipelineCommandKind::Save => {
                     spawn_save(
                         config.storage.directory.clone(),
+                        stage.game.clone(),
                         &stage.encoder,
                         audio.as_ref(),
                         buffer.snapshot(),
@@ -1271,6 +1272,7 @@ fn run_pipeline(
 #[cfg(target_os = "windows")]
 fn save_replay(
     directory: &std::path::Path,
+    game: Option<&str>,
     video_media_type: &windows::Win32::Media::MediaFoundation::IMFMediaType,
     audio_media_type: Option<&windows::Win32::Media::MediaFoundation::IMFMediaType>,
     packets: &[rewa_core::replay_buffer::EncodedPacket],
@@ -1279,11 +1281,21 @@ fn save_replay(
 
     std::fs::create_dir_all(directory)
         .map_err(|error| crate::video::VideoError::Initialization(error.to_string()))?;
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| crate::video::VideoError::Initialization(error.to_string()))?
-        .as_millis();
-    let final_path = crate::mux::unique_clip_path(directory, timestamp);
+    let counter = rewa_core::paths::AppPaths::discover()
+        .config_dir
+        .join("clip-counter");
+    let stem = match rewa_core::clips::next_clip_name(&counter, directory) {
+        Ok(stem) => stem,
+        Err(error) => {
+            rewa_core::diagnostic!("Rewa save: clip counter unavailable, naming by time: {error}");
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| crate::video::VideoError::Initialization(error.to_string()))?
+                .as_millis();
+            format!("rewa-{timestamp}")
+        }
+    };
+    let final_path = crate::mux::unique_clip_path(directory, &stem);
     let stem = final_path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -1300,12 +1312,18 @@ fn save_replay(
     }
     std::fs::rename(&temporary_path, &final_path)
         .map_err(|error| crate::video::VideoError::Initialization(error.to_string()))?;
+    if let Some(game) = game
+        && let Err(error) = crate::game::tag_clip(&final_path, game)
+    {
+        rewa_core::diagnostic!("Rewa save: cannot note the game on the clip: {error}");
+    }
     Ok(final_path)
 }
 
 #[cfg(target_os = "windows")]
 fn spawn_save(
     directory: std::path::PathBuf,
+    game: Option<String>,
     encoder: &crate::encoder::HardwareVideoEncoder,
     audio: Option<&PipelineAudio>,
     packets: Vec<rewa_core::replay_buffer::EncodedPacket>,
@@ -1348,9 +1366,13 @@ fn spawn_save(
                             .map(MarshaledMediaType::unmarshal)
                             .transpose();
                         match (video_media_type, audio_media_type) {
-                            (Ok(video), Ok(audio)) => {
-                                save_replay(&directory, &video, audio.as_ref(), &packets)
-                            }
+                            (Ok(video), Ok(audio)) => save_replay(
+                                &directory,
+                                game.as_deref(),
+                                &video,
+                                audio.as_ref(),
+                                &packets,
+                            ),
                             (Err(error), _) | (_, Err(error)) => Err(error),
                         }
                     };

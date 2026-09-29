@@ -396,6 +396,33 @@ pub fn format_age(modified: SystemTime) -> String {
     }
 }
 
+/// Names the next saved replay "Clip N". The counter only climbs, so deleting
+/// clips never hands a number out twice; a renamed-in "Clip N" above it still wins.
+pub fn next_clip_name(counter_file: &Path, directory: &Path) -> io::Result<String> {
+    let stored = fs::read_to_string(counter_file)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let existing = scan(directory)?
+        .iter()
+        .filter_map(|clip| {
+            clip.path
+                .file_stem()?
+                .to_str()?
+                .strip_prefix("Clip ")?
+                .parse::<u64>()
+                .ok()
+        })
+        .max()
+        .unwrap_or(0);
+    let next = stored.max(existing) + 1;
+    if let Some(parent) = counter_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(counter_file, next.to_string())?;
+    Ok(format!("Clip {next}"))
+}
+
 fn is_video(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -410,6 +437,31 @@ fn is_video(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clip_numbers_only_climb_even_after_deletes() {
+        let root = std::env::temp_dir().join(format!(
+            "rewa-counter-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let clips = root.join("clips");
+        let counter = root.join("config").join("clip-counter");
+        fs::create_dir_all(clips.join("Valorant")).unwrap();
+
+        assert_eq!(next_clip_name(&counter, &clips).unwrap(), "Clip 1");
+        fs::write(clips.join("Clip 1.mp4"), b"clip").unwrap();
+        assert_eq!(next_clip_name(&counter, &clips).unwrap(), "Clip 2");
+        fs::remove_file(clips.join("Clip 1.mp4")).unwrap();
+        assert_eq!(next_clip_name(&counter, &clips).unwrap(), "Clip 3");
+        fs::write(clips.join("Valorant").join("Clip 9.mp4"), b"clip").unwrap();
+        assert_eq!(next_clip_name(&counter, &clips).unwrap(), "Clip 10");
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn recognizes_supported_video_extensions() {

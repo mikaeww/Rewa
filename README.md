@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/rewa.svg" width="96" alt="Rewa ghost holding a rewind button"></p>
+<p align="center"><img src="assets/rewa-ghost.png" width="96" alt="Rewa ghost"></p>
 
 # Rewa
 

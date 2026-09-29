@@ -6,13 +6,13 @@ use rewa_core::replay_buffer::{EncodedPacket, TrackKind};
 #[cfg(target_os = "windows")]
 use crate::video::VideoError;
 
-pub fn unique_clip_path(directory: &Path, unix_milliseconds: u128) -> PathBuf {
-    let first = directory.join(format!("rewa-{unix_milliseconds}.mp4"));
+pub fn unique_clip_path(directory: &Path, stem: &str) -> PathBuf {
+    let first = directory.join(format!("{stem}.mp4"));
     if !first.exists() {
         return first;
     }
     for suffix in 2_u32.. {
-        let candidate = directory.join(format!("rewa-{unix_milliseconds}-{suffix}.mp4"));
+        let candidate = directory.join(format!("{stem} ({suffix}).mp4"));
         if !candidate.exists() {
             return candidate;
         }
@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn clip_paths_do_not_overwrite_same_millisecond_saves() {
+    fn clip_paths_never_overwrite_an_existing_clip() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -245,12 +245,12 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("rewa-mux-{unique}"));
         fs::create_dir_all(&directory).unwrap();
 
-        let first = unique_clip_path(&directory, 1234);
+        let first = unique_clip_path(&directory, "Clip 4");
         fs::write(&first, b"existing").unwrap();
-        let second = unique_clip_path(&directory, 1234);
+        let second = unique_clip_path(&directory, "Clip 4");
 
-        assert_eq!(first.file_name().unwrap(), "rewa-1234.mp4");
-        assert_eq!(second.file_name().unwrap(), "rewa-1234-2.mp4");
+        assert_eq!(first.file_name().unwrap(), "Clip 4.mp4");
+        assert_eq!(second.file_name().unwrap(), "Clip 4 (2).mp4");
         fs::remove_dir_all(directory).unwrap();
     }
 

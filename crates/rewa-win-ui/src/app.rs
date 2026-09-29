@@ -13,17 +13,16 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, ClientToScreen, CreateRoundRectRgn, DeleteObject, EndPaint, GetMonitorInfoW,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, PAINTSTRUCT, ScreenToClient,
-    SetWindowRgn, UpdateWindow,
+    BeginPaint, ClientToScreen, EndPaint, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow, PAINTSTRUCT, ScreenToClient, UpdateWindow,
 };
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{
     GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
 };
+use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
@@ -55,10 +54,10 @@ use crate::model::{
 };
 use crate::player::{PLAYER_EVENT, Player};
 use crate::renderer::{
-    Renderer, clips_overflow, editor_player_bounds, editor_timeline_fraction, editor_timeline_rail,
-    folder_column_contains, folder_column_overflow, fullscreen_timeline_rail,
-    fullscreen_volume_rail, player_bounds, player_timeline_rail, player_volume_rail,
-    settings_audio_gain_rail, settings_gain_percent,
+    FULLSCREEN_HEADER_HEIGHT, Renderer, clips_overflow, editor_player_bounds,
+    editor_timeline_fraction, editor_timeline_rail, folder_column_contains, folder_column_overflow,
+    fullscreen_timeline_rail, fullscreen_volume_rail, player_bounds, player_timeline_rail,
+    player_volume_rail, settings_audio_gain_rail, settings_gain_percent,
 };
 use rewa_windows::meter::{MicrophoneMeter, MicrophoneProbe};
 
@@ -77,7 +76,7 @@ const METER_INTERVAL: Duration = Duration::from_millis(66);
 const METER_RETRY: Duration = Duration::from_secs(2);
 const LIBRARY_WHEEL_STEP: f32 = 104.0;
 const FULLSCREEN_CONTROLS_LIFETIME: Duration = Duration::from_secs(3);
-const FULLSCREEN_CONTROLS_HEIGHT: f32 = 184.0;
+const FULLSCREEN_CONTROLS_HEIGHT: f32 = 84.0;
 
 struct AppState {
     model: UiModel,
@@ -179,12 +178,11 @@ enum HotkeyActivation {
 pub fn run() -> Result<(), String> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-            .ok()
-            .map_err(|error| error.to_string())?;
+        // OLE rather than bare COM: dragging clips out to other programs needs it
+        OleInitialize(None).map_err(|error| error.to_string())?;
     }
     let result = run_initialized();
-    unsafe { CoUninitialize() };
+    unsafe { OleUninitialize() };
     result
 }
 
@@ -536,7 +534,10 @@ unsafe extern "system" fn window_proc(
                 {
                     state.model.capture_panel_open = false;
                 }
-                state.clip_drag = if state.model.page == crate::model::Page::Collections {
+                state.clip_drag = if matches!(
+                    state.model.page,
+                    crate::model::Page::Library | crate::model::Page::Collections
+                ) {
                     match hit.as_ref() {
                         Some(Action::OpenClip(index) | Action::ToggleClipSelection(index)) => {
                             Some(ClipDrag {
@@ -632,7 +633,7 @@ unsafe extern "system" fn window_proc(
                     update_editor_drag(state, x, false);
                 }
                 if state.clip_drag.is_some() {
-                    update_clip_drag(state, x, y);
+                    update_clip_drag(window, state, x, y);
                 }
                 if state.slider_drag.is_some() {
                     update_slider_drag(state, x, y, false);
@@ -845,7 +846,14 @@ unsafe extern "system" fn window_proc(
             if state_mut(window).is_some_and(|state| state.model.hotkey_capture) =>
         {
             if let Some(state) = state_mut(window) {
-                state.model.hotkey_modifiers = pressed_hotkey_modifiers();
+                // Windows never sends a key-down for Print Screen, only its key-up
+                if wparam.0 == 0x2c {
+                    if let Some(hotkey) = capture_hotkey(&mut state.model, 0x2c) {
+                        begin_hotkey_update(state, hotkey);
+                    }
+                } else {
+                    state.model.hotkey_modifiers = pressed_hotkey_modifiers();
+                }
                 redraw(window);
             }
             LRESULT(0)
@@ -1159,6 +1167,12 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
             }
             update_player_window(state);
         }
+        Action::Home => {
+            handle_action(window, state, Action::Navigate(crate::model::Page::Library));
+            state.model.search.clear();
+            state.model.set_clip_tab(crate::model::ClipTab::All);
+            state.model.library_scroll = 0.0;
+        }
         Action::SettingsSection(section) => {
             if state.model.page != crate::model::Page::Settings {
                 state.model.navigate(crate::model::Page::Settings);
@@ -1257,9 +1271,10 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
             let message = state.model.strings().notice_library_refreshed;
             set_result(&mut state.model, result, message);
         }
-        Action::SetLibraryGrid(grid) => {
-            state.model.library_grid = grid;
+        Action::SetLibraryView(view) => {
+            state.model.config.appearance.library_view = view;
             state.model.library_scroll = 0.0;
+            persist_appearance(&mut state.model);
         }
         Action::SetClipTab(tab) => state.model.set_clip_tab(tab),
         Action::ToggleFilterPanel => {
@@ -1297,16 +1312,17 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
                 state.model.notice = Some(error);
             }
         }
-        Action::OpenClipExternally(index) => {
+        Action::OpenClipExternally(index) | Action::ShowClipInExplorer(index) => {
             state.model.context_menu = None;
-            if let Some(clip) = state.model.clips.get(index) {
-                open_path(&clip.path.clone());
-            } else {
-                state.model.notice = Some(state.model.strings().notice_clip_gone.to_owned());
+            match state.model.clips.get(index) {
+                Some(clip) if matches!(action, Action::ShowClipInExplorer(_)) => {
+                    show_in_explorer(&clip.path.clone());
+                }
+                Some(clip) => open_path(&clip.path.clone()),
+                None => {
+                    state.model.notice = Some(state.model.strings().notice_clip_gone.to_owned());
+                }
             }
-        }
-        Action::ToggleCollectionSort => {
-            state.model.collections_descending = !state.model.collections_descending;
         }
         Action::SaveReplay => start_replay_save(state),
         Action::OpenClipsFolder => open_path(&state.model.config.storage.directory),
@@ -1326,6 +1342,7 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
         Action::ClearSearch => {
             state.model.search.clear();
             state.model.active_collection = None;
+            state.model.active_game = None;
         }
         Action::Ignore | Action::PlaceSearchCaret(_) | Action::PlacePromptCaret(_) => {}
         Action::DismissNotice => state.model.notice = None,
@@ -1421,7 +1438,15 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
             confirm_delete(&mut state.model);
             update_player_window(state);
         }
+        Action::SelectGame(index) => {
+            state.model.active_collection = None;
+            state.model.active_game = state.model.games().into_iter().nth(index);
+            state.model.selected_clips.clear();
+            state.model.collection_picker_open = false;
+            state.model.library_scroll = 0.0;
+        }
         Action::SelectCollection(index) => {
+            state.model.active_game = None;
             state.model.active_collection = index
                 .and_then(|index| state.model.collections.get(index))
                 .map(|collection| collection.path.clone());
@@ -1579,6 +1604,12 @@ fn poll_trim_updates(state: &mut AppState) -> bool {
                 state.model.editor_working = false;
                 let replaced_successfully = match result {
                     Ok(report) => {
+                        // a cut is a new file and a replacement a renamed one; both lose the stream
+                        if let Some(game) = state.model.clip_games.get(&source)
+                            && let Err(error) = rewa_windows::game::tag_clip(&report.path, game)
+                        {
+                            rewa_core::diagnostic!("Rewa trim: cannot keep the game note: {error}");
+                        }
                         let result = state.model.refresh();
                         if result.is_ok() && state.model.page == crate::model::Page::Editor {
                             state.model.active_clip = state
@@ -1648,7 +1679,10 @@ fn begin_hotkey_update(state: &mut AppState, hotkey: rewa_core::config::HotkeyCo
         });
     if let Err(error) = spawned {
         state.model.hotkey_pending = false;
-        state.model.hotkey_error = Some(format!("Cannot start shortcut update: {error}"));
+        state.model.hotkey_error = Some(format!(
+            "{}: {error}",
+            state.model.strings().notice_shortcut_failed
+        ));
         state.model.notice = None;
     }
 }
@@ -1879,7 +1913,10 @@ fn poll_hotkey_updates(state: &mut AppState) -> bool {
             }
             Err(error) => {
                 state.model.hotkey_deferred = false;
-                state.model.hotkey_error = Some(format!("Cannot change shortcut: {error}"));
+                state.model.hotkey_error = Some(format!(
+                    "{}: {error}",
+                    state.model.strings().notice_shortcut_failed
+                ));
                 state.model.notice = None;
             }
         }
@@ -1918,7 +1955,7 @@ fn capture_hotkey(
         }
         key => {
             let Some(key_name) = rewa_windows::hotkey::key_name_from_virtual_key(key) else {
-                model.hotkey_error = Some("That key cannot be used as a Windows shortcut.".into());
+                model.hotkey_error = Some(model.strings().hotkey_key_unusable.to_owned());
                 model.notice = None;
                 return None;
             };
@@ -1933,8 +1970,8 @@ fn capture_hotkey(
                 modifiers,
                 key: key_name,
             };
-            if let Err(error) = rewa_windows::hotkey::validate_hotkey_choice(&hotkey) {
-                model.hotkey_error = Some(format!("Choose a safer shortcut: {error}."));
+            if rewa_windows::hotkey::validate_hotkey_choice(&hotkey).is_err() {
+                model.hotkey_error = Some(model.strings().hotkey_rule.to_owned());
                 model.notice = None;
                 return None;
             }
@@ -1989,6 +2026,7 @@ fn confirm_prompt(state: &mut AppState) {
             match rewa_core::clips::create_collection(&directory, &name) {
                 Ok(path) => {
                     state.model.active_collection = Some(path);
+                    state.model.active_game = None;
                     Ok(text.notice_collection_created)
                 }
                 Err(error) => Err(format!("{}: {error}", text.notice_cannot_create_collection)),
@@ -2014,6 +2052,7 @@ fn confirm_prompt(state: &mut AppState) {
             match rewa_core::clips::rename_collection(&directory, &collection, &name) {
                 Ok(path) => {
                     state.model.active_collection = Some(path);
+                    state.model.active_game = None;
                     Ok(text.notice_collection_renamed)
                 }
                 Err(error) => Err(format!("{}: {error}", text.notice_cannot_rename_collection)),
@@ -2152,7 +2191,7 @@ fn update_editor_drag(state: &mut AppState, x: f32, settle: bool) {
     seek_editor_preview(state, position, settle);
 }
 
-fn update_clip_drag(state: &mut AppState, x: f32, y: f32) {
+fn update_clip_drag(window: HWND, state: &mut AppState, x: f32, y: f32) {
     let Some(drag) = &mut state.clip_drag else {
         return;
     };
@@ -2165,6 +2204,15 @@ fn update_clip_drag(state: &mut AppState, x: f32, y: f32) {
         drag.active = true;
     }
     let clip = drag.clip;
+    let scale = state.dpi as f32 / 96.0;
+    let inside =
+        x >= 0.0 && y >= 0.0 && x < state.width as f32 / scale && y < state.height as f32 / scale;
+    // collections keep their own folder drop; anywhere else a drag carries the files out
+    if state.model.page != crate::model::Page::Collections || !inside {
+        let paths = dragged_clip_paths(&state.model, clip);
+        drag_clips_out(window, state, &paths);
+        return;
+    }
     let count = state
         .model
         .clips
@@ -2213,6 +2261,51 @@ fn finish_clip_drag(window: HWND, state: &mut AppState, x: f32, y: f32) {
         state.model.toggle_clip_selection(drag.clip);
     } else {
         handle_action(window, state, Action::OpenClip(drag.clip));
+    }
+}
+
+/// Hands the clips to the shell's own drag loop, so they drop into Explorer,
+/// Discord or a browser as files; copy only, so the library never loses them.
+fn drag_clips_out(window: HWND, state: &mut AppState, paths: &[PathBuf]) {
+    use windows::Win32::System::Com::IDataObject;
+    use windows::Win32::System::Ole::{DROPEFFECT_COPY, IDropSource};
+    use windows::Win32::UI::Shell::{
+        BHID_DataObject, ILCreateFromPathW, ILFree, IShellItemArray,
+        SHCreateShellItemArrayFromIDLists, SHDoDragDrop,
+    };
+
+    state.clip_drag = None;
+    state.model.clip_drag_preview = None;
+    let _ = unsafe { ReleaseCapture() };
+    let items = paths
+        .iter()
+        .map(|path| {
+            let path = wide(&path.display().to_string());
+            unsafe { ILCreateFromPathW(PCWSTR(path.as_ptr())) }
+        })
+        .filter(|item| !item.is_null())
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return;
+    }
+    let dragged = (|| -> windows::core::Result<()> {
+        let list = items
+            .iter()
+            .map(|item| item.cast_const())
+            .collect::<Vec<_>>();
+        let array: IShellItemArray = unsafe { SHCreateShellItemArrayFromIDLists(&list) }?;
+        let data: IDataObject = unsafe { array.BindToHandler(None, &BHID_DataObject) }?;
+        unsafe { SHDoDragDrop(Some(window), &data, None::<&IDropSource>, DROPEFFECT_COPY) }?;
+        Ok(())
+    })();
+    for item in items {
+        unsafe { ILFree(Some(item.cast_const())) };
+    }
+    if let Err(error) = dragged {
+        state.model.notice = Some(format!(
+            "{}: {error}",
+            state.model.strings().notice_cannot_drag
+        ));
     }
 }
 
@@ -2487,11 +2580,12 @@ fn update_player_window(state: &mut AppState) {
     let logical_width = (state.width as f32 / scale).round() as u32;
     let logical_height = (state.height as f32 / scale).round() as u32;
     let bounds = if state.fullscreen.is_some() && state.model.page == crate::model::Page::Player {
+        // the controls float over the foot of the video and hide after a few seconds
         crate::renderer::LogicalRect {
             left: 0.0,
-            top: 78.0,
+            top: FULLSCREEN_HEADER_HEIGHT,
             right: logical_width as f32,
-            bottom: (logical_height as f32 - FULLSCREEN_CONTROLS_HEIGHT).max(79.0),
+            bottom: (logical_height as f32).max(FULLSCREEN_HEADER_HEIGHT + 1.0),
         }
     } else if state.model.page == crate::model::Page::Editor {
         editor_player_bounds(&state.model, logical_width, logical_height)
@@ -2509,23 +2603,6 @@ fn update_player_window(state: &mut AppState) {
             SWP_NOZORDER,
         )
     };
-    let pixel_width = ((bounds.right - bounds.left) * scale).round().max(1.0) as i32;
-    let pixel_height = ((bounds.bottom - bounds.top) * scale).round().max(1.0) as i32;
-    if state.fullscreen.is_some() {
-        unsafe {
-            let _ = SetWindowRgn(window, None, true);
-        }
-    } else {
-        let diameter = (18.0 * scale).round().max(2.0) as i32;
-        let region = unsafe {
-            CreateRoundRectRgn(0, 0, pixel_width + 1, pixel_height + 1, diameter, diameter)
-        };
-        if unsafe { SetWindowRgn(window, Some(region), true) } == 0 {
-            unsafe {
-                let _ = DeleteObject(region.into());
-            }
-        }
-    }
     unsafe {
         let _ = ShowWindow(window, SW_SHOW);
     }
@@ -3393,18 +3470,7 @@ fn select_settings_option(model: &mut UiModel, index: usize) {
         model.library_scroll = 0.0;
     }
     if appearance {
-        // the look applies at once, but the settings page may hold unconfirmed
-        // capture edits, so only the appearance block reaches the file
-        let paths = model.paths.clone();
-        let mut stored =
-            rewa_core::config::Config::load(&paths).unwrap_or_else(|_| model.config.clone());
-        stored.appearance = model.config.appearance;
-        if let Err(error) = stored.save(&paths) {
-            model.notice = Some(format!(
-                "{}: {error}",
-                model.strings().notice_appearance_failed
-            ));
-        }
+        persist_appearance(model);
     }
     if apply_immediately {
         let message = model.strings().notice_setting_applied;
@@ -3412,8 +3478,25 @@ fn select_settings_option(model: &mut UiModel, index: usize) {
     }
 }
 
+/// The look applies at once, but the settings page may hold unconfirmed capture
+/// edits, so only the appearance block reaches the file.
+fn persist_appearance(model: &mut UiModel) {
+    let paths = model.paths.clone();
+    let mut stored =
+        rewa_core::config::Config::load(&paths).unwrap_or_else(|_| model.config.clone());
+    stored.appearance = model.config.appearance;
+    if let Err(error) = stored.save(&paths) {
+        model.notice = Some(format!(
+            "{}: {error}",
+            model.strings().notice_appearance_failed
+        ));
+    }
+}
+
 fn load_displays(model: &mut UiModel) -> Result<(), String> {
-    let displays = rewa_windows::display::displays().map_err(|error| error.to_string())?;
+    let mut displays = rewa_windows::display::displays().map_err(|error| error.to_string())?;
+    // primary first, so the fallback the page shows is the one the recorder takes
+    displays.sort_by_key(|display| !display.primary);
     if displays.is_empty() {
         return Err("Windows reported no displays".into());
     }
@@ -3578,6 +3661,22 @@ fn open_path(path: &Path) {
             w!("open"),
             PCWSTR(path.as_ptr()),
             None,
+            None,
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+fn show_in_explorer(path: &Path) {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let arguments = wide(&format!("/select,\"{}\"", path.display()));
+    unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            w!("explorer.exe"),
+            PCWSTR(arguments.as_ptr()),
             None,
             SW_SHOWNORMAL,
         );

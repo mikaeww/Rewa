@@ -52,6 +52,10 @@ pub struct Player {
     loaded: bool,
     load_error: Option<String>,
     ready: bool,
+    /// A media item is on its way; MFPlay refuses another one until it lands.
+    setting: bool,
+    /// The clip asked for while `setting`; it replaces the one still loading.
+    queued: Option<Vec<u16>>,
     should_play: Cell<bool>,
     volume: Cell<f32>,
 }
@@ -82,6 +86,8 @@ impl Player {
             loaded: false,
             load_error: None,
             ready: false,
+            setting: false,
+            queued: None,
             should_play: Cell::new(false),
             volume: Cell::new(1.0),
         })
@@ -89,7 +95,7 @@ impl Player {
 
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
         self.ready = false;
-        self.loaded = false;
+        self.loaded = true;
         self.load_error = None;
         self.should_play.set(true);
         let path = path
@@ -97,6 +103,15 @@ impl Player {
             .encode_wide()
             .chain(Some(0))
             .collect::<Vec<_>>();
+        if self.setting {
+            // switching faster than MFPlay loads: the newest clip waits for the landing
+            self.queued = Some(path);
+            return Ok(());
+        }
+        self.set_item(path)
+    }
+
+    fn set_item(&mut self, path: Vec<u16>) -> Result<(), String> {
         let result = (|| {
             let _ = unsafe { self.media.ClearMediaItem() };
             let mut item = None;
@@ -110,11 +125,12 @@ impl Player {
                 .map_err(|error| format!("Media Foundation cannot load the clip: {error}"))
         })();
         if let Err(error) = result {
+            self.loaded = false;
             self.should_play.set(false);
             self.load_error = Some(error.clone());
             return Err(error);
         }
-        self.loaded = true;
+        self.setting = true;
         Ok(())
     }
 
@@ -173,16 +189,32 @@ impl Player {
 
     pub fn close(&mut self) {
         self.should_play.set(false);
+        self.queued = None;
         if !self.loaded {
             return;
         }
-        let _ = unsafe { self.media.ClearMediaItem() };
+        // an item still loading is cleared once it lands, see `handle_event`
+        if !self.setting {
+            let _ = unsafe { self.media.ClearMediaItem() };
+        }
         self.loaded = false;
         self.ready = false;
         self.load_error = None;
     }
 
     pub fn handle_event(&mut self, event_type: i32, result: i32) -> Result<(), String> {
+        if event_type == MFP_EVENT_TYPE_MEDIAITEM_SET.0 {
+            self.setting = false;
+            if let Some(next) = self.queued.take() {
+                // the item that just landed is already stale
+                return self.set_item(next);
+            }
+            if !self.loaded {
+                // the page closed while the clip was loading; it must not start playing hidden
+                let _ = unsafe { self.media.ClearMediaItem() };
+                return Ok(());
+            }
+        }
         if result < 0 {
             self.ready = false;
             let error =

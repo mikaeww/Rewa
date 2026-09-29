@@ -26,6 +26,18 @@ pub struct AppearanceConfig {
     pub hover: HoverStyle,
     pub hover_strength: HoverStrength,
     pub language: Language,
+    pub library_view: LibraryView,
+}
+
+/// How the clips page lays out its clips; remembered across starts.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LibraryView {
+    Compact,
+    // a view Rewa no longer offers falls back here instead of breaking the whole file
+    #[default]
+    #[serde(other)]
+    Grid,
 }
 
 /// Interface language. `System` follows the Windows display language.
@@ -447,11 +459,20 @@ duration_seconds = 30
     }
 
     #[test]
+    fn a_retired_library_view_reads_as_the_grid() {
+        let config: Config = toml::from_str("[appearance]\nlibrary_view = \"list\"\n")
+            .expect("an unknown view still parses");
+
+        assert_eq!(config.appearance.library_view, LibraryView::Grid);
+    }
+
+    #[test]
     fn the_appearance_section_round_trips_through_toml() {
         let mut config = Config::default();
         config.appearance.theme = Theme::Cafe;
         config.appearance.hover = HoverStyle::Outline;
         config.appearance.hover_strength = HoverStrength::Strong;
+        config.appearance.library_view = LibraryView::Compact;
 
         let encoded = toml::to_string_pretty(&config).expect("configuration encodes");
         assert!(encoded.contains("theme = \"cafe\""));
