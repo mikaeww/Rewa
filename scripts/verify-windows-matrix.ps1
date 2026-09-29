@@ -64,9 +64,9 @@ function Test-ActiveGpuAdapter([object]$Adapter, [string]$GpuTag) {
     return [uint32]$Adapter.VendorId -eq [uint32]$ExpectedVendorId
 }
 
-$Files = @(Get-ChildItem -LiteralPath $ResolvedEvidenceDirectory -Filter "wreath-*.json" -File)
+$Files = @(Get-ChildItem -LiteralPath $ResolvedEvidenceDirectory -Filter "rewa-*.json" -File)
 if ($Files.Count -eq 0) {
-    throw "no Wreath JSON summaries found in $ResolvedEvidenceDirectory"
+    throw "no Rewa JSON summaries found in $ResolvedEvidenceDirectory"
 }
 
 $Runs = [System.Collections.Generic.List[object]]::new()
@@ -83,8 +83,8 @@ foreach ($File in $Files) {
         "SaveAttempts", "SaveFailures", "ValidatedClips", "ClipValidations", "ConfiguredReplaySeconds",
         "ConfiguredFramesPerSecond", "ShortReplaySaves", "SlowReplaySaves",
         "PeakSaveDurationMs", "PeakEncodedReplayMb", "IoCountersAvailable", "GpuCountersAvailable",
-        "AverageWreathWriteBytesPerSecond", "AverageMedalWriteBytesPerSecond",
-        "WreathToMedalWriteIoRatio", "AverageIdleWreathWriteMbPerSecond", "Gates"
+        "AverageRewaWriteBytesPerSecond", "AverageMedalWriteBytesPerSecond",
+        "RewaToMedalWriteIoRatio", "AverageIdleRewaWriteMbPerSecond", "Gates"
     )
     $MissingProperties = @($RequiredProperties | Where-Object {
         $null -eq $Summary.PSObject.Properties[$_]
@@ -93,8 +93,8 @@ foreach ($File in $Files) {
         $Failures.Add("$($File.Name): missing fields: $($MissingProperties -join ', ')")
         continue
     }
-    if ($Summary.Product -ne "Wreath") {
-        $Failures.Add("$($File.Name): expected a Wreath summary")
+    if ($Summary.Product -ne "Rewa") {
+        $Failures.Add("$($File.Name): expected a Rewa summary")
         continue
     }
     $MissingSystemProperties = @(@("OsCaption", "OsBuild", "Fingerprint", "Gpu") | Where-Object {
@@ -217,27 +217,27 @@ foreach ($File in $Files) {
     if (-not $Summary.GpuCountersAvailable) {
         $Failures.Add("$($File.Name): GPU engine counter evidence is incomplete")
     }
-    if ([double]$Summary.AverageWreathWriteBytesPerSecond -lt 0 -or
+    if ([double]$Summary.AverageRewaWriteBytesPerSecond -lt 0 -or
         [double]$Summary.AverageMedalWriteBytesPerSecond -lt 0) {
         $Failures.Add("$($File.Name): process write-I/O evidence cannot be negative")
     }
-    if ([double]$Summary.AverageIdleWreathWriteMbPerSecond -lt 0 -or
-        [double]$Summary.AverageIdleWreathWriteMbPerSecond -gt 1.0 -or
+    if ([double]$Summary.AverageIdleRewaWriteMbPerSecond -lt 0 -or
+        [double]$Summary.AverageIdleRewaWriteMbPerSecond -gt 1.0 -or
         [double]$Summary.Gates.MaxIdleWriteMbPerSecond -gt 1.0) {
         $Failures.Add("$($File.Name): idle write-I/O evidence violates the release limit")
     }
     if ($Summary.RelativeGatesEvaluated -and (
-        $null -eq $Summary.WreathToMedalWriteIoRatio -or
+        $null -eq $Summary.RewaToMedalWriteIoRatio -or
         [double]$Summary.AverageMedalWriteBytesPerSecond -le 0 -or
-        [double]$Summary.WreathToMedalWriteIoRatio -lt 0 -or
-        [double]$Summary.WreathToMedalWriteIoRatio -gt 0.25 -or
+        [double]$Summary.RewaToMedalWriteIoRatio -lt 0 -or
+        [double]$Summary.RewaToMedalWriteIoRatio -gt 0.25 -or
         [double]$Summary.Gates.MaxRelativeWriteIo -gt 0.25
     )) {
         $Failures.Add("$($File.Name): Medal write-I/O comparison violates the release limit")
     } elseif ($Summary.RelativeGatesEvaluated) {
-        $ExpectedWriteIoRatio = [double]$Summary.AverageWreathWriteBytesPerSecond /
+        $ExpectedWriteIoRatio = [double]$Summary.AverageRewaWriteBytesPerSecond /
             [double]$Summary.AverageMedalWriteBytesPerSecond
-        if ([Math]::Abs($ExpectedWriteIoRatio - [double]$Summary.WreathToMedalWriteIoRatio) -gt 0.001) {
+        if ([Math]::Abs($ExpectedWriteIoRatio - [double]$Summary.RewaToMedalWriteIoRatio) -gt 0.001) {
             $Failures.Add("$($File.Name): reported write-I/O ratio does not match its samples")
         }
     }
@@ -317,7 +317,7 @@ $Soaks = @($Runs | Where-Object {
     [int]$_.Summary.SaveAttempts -gt 0
 })
 if ($Soaks.Count -eq 0) {
-    $Failures.Add("matrix has no qualifying Wreath-only soak run")
+    $Failures.Add("matrix has no qualifying Rewa-only soak run")
 }
 
 $FingerprintGroups = @($Runs | Group-Object { $_.Summary.System.Fingerprint })

@@ -497,6 +497,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "rewa-core"
+version = "1.5.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "rewa-ui"
+version = "1.5.2"
+dependencies = [
+ "gdk-pixbuf",
+ "gtk4",
+ "rewa-core",
+ "serde_json",
+]
+
+[[package]]
+name = "rewa-win-ui"
+version = "1.5.2"
+dependencies = [
+ "rewa-core",
+ "rewa-windows",
+ "windows",
+ "windows-core",
+ "windows-numerics",
+ "winresource",
+]
+
+[[package]]
+name = "rewa-windows"
+version = "1.5.2"
+dependencies = [
+ "crossbeam-channel",
+ "rewa-core",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
+name = "rewactl"
+version = "1.5.2"
+dependencies = [
+ "rewa-core",
+ "rewa-windows",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "rewad"
+version = "1.5.2"
+dependencies = [
+ "rewa-core",
+ "rewa-windows",
+ "winresource",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -851,65 +910,6 @@ checksum = "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087"
 dependencies = [
  "toml 1.1.3+spec-1.1.0",
  "version_check",
-]
-
-[[package]]
-name = "wreath-core"
-version = "1.5.2"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "wreath-ui"
-version = "1.5.2"
-dependencies = [
- "gdk-pixbuf",
- "gtk4",
- "serde_json",
- "wreath-core",
-]
-
-[[package]]
-name = "wreath-win-ui"
-version = "1.5.2"
-dependencies = [
- "windows",
- "windows-core",
- "windows-numerics",
- "winresource",
- "wreath-core",
- "wreath-windows",
-]
-
-[[package]]
-name = "wreath-windows"
-version = "1.5.2"
-dependencies = [
- "crossbeam-channel",
- "windows",
- "windows-core",
- "wreath-core",
-]
-
-[[package]]
-name = "wreathctl"
-version = "1.5.2"
-dependencies = [
- "toml 0.9.12+spec-1.1.0",
- "wreath-core",
- "wreath-windows",
-]
-
-[[package]]
-name = "wreathd"
-version = "1.5.2"
-dependencies = [
- "winresource",
- "wreath-core",
- "wreath-windows",
 ]
 
 [[package]]

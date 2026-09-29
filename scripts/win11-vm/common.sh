@@ -8,7 +8,14 @@ VM_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/wreath-win11"
 ISO_DIR="$VM_ROOT/iso"
 IMAGE_DIR="$VM_ROOT/images"
 PAYLOAD_DIR="$VM_ROOT/payload"
-STATE_DIR="$VM_ROOT/state"
+# WREATH_VM names a second, independent VM next to the original one; unset keeps the original.
+VM_INSTANCE="${WREATH_VM:-}"
+if [[ -n "$VM_INSTANCE" && ! "$VM_INSTANCE" =~ ^[a-z0-9-]+$ ]]; then
+    printf 'WREATH_VM may only contain a-z, 0-9 and -.\n' >&2
+    exit 1
+fi
+VM_SUFFIX="${VM_INSTANCE:+-$VM_INSTANCE}"
+STATE_DIR="$VM_ROOT/state$VM_SUFFIX"
 TOOL_DIR="$VM_ROOT/tools"
 WINDOWS_ISO="$ISO_DIR/Win11_Enterprise_Eval_25H2_de-de_x64.iso"
 WINDOWS_ISO_URL="https://aka.ms/Win11E-ISO-25H2-de-de"
@@ -20,9 +27,16 @@ WINDOWS_EFI_NOPROMPT_SECTOR="3471921"
 WINDOWS_EFI_SHA256="bc1df11a9148b4e3b60b32095ca3dc5d400ca0d16e2b43d3a8a0282a9e66c4d5"
 VIRTIO_TOOLS="$PAYLOAD_DIR/virtio-win-guest-tools.exe"
 VIRTIO_TOOLS_URL="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win-guest-tools.exe"
-VM_DISK="$IMAGE_DIR/wreath-win11.qcow2"
-DOMAIN_NAME="Wreath Windows 11"
-DOMAIN_UUID="b6a7f323-f76d-4af8-a5ad-6fd75a88d159"
+VM_DISK="$IMAGE_DIR/wreath-win11$VM_SUFFIX.qcow2"
+if [[ -z "$VM_INSTANCE" ]]; then
+    DOMAIN_NAME="Wreath Windows 11"
+    DOMAIN_UUID="b6a7f323-f76d-4af8-a5ad-6fd75a88d159"
+    DOMAIN_MAC="52:54:00:57:11:26"
+else
+    DOMAIN_NAME="Wreath Windows 11 $VM_INSTANCE"
+    DOMAIN_UUID="$(uuidgen --sha1 --namespace @url --name "wreath-win11:$VM_INSTANCE")"
+    DOMAIN_MAC="52:54:00:$(printf '%s' "$VM_INSTANCE" | sha256sum | sed -E 's/^(..)(..)(..).*/\1:\2:\3/')"
+fi
 
 box_virsh() {
     flatpak run --command=virsh org.gnome.Boxes -c qemu:///session "$@"

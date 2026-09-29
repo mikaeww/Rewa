@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mikaeww.Rewa</id>
+  <name>Rewa</name>
+  <summary>Local instant replay recorder for Linux desktops</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Rewa records a short, hardware-encoded rolling buffer and saves a local
+      video only when you press your configured desktop shortcut.
+    </p>
+    <p>
+      Clips, settings, thumbnails, and playback stay on this machine. Rewa
+      contains no accounts, telemetry, uploads, or cloud synchronization.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mikaeww.Rewa.desktop</launchable>
+  <developer id="io.github.mikaeww">
+    <name>Mika</name>
+  </developer>
+  <url type="homepage">https://github.com/mikaeww/rewa</url>
+  <url type="bugtracker">https://github.com/mikaeww/rewa/issues</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Recorder</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.2.3" date="2026-08-07"/>
+    <release version="0.2.2" date="2026-08-07"/>
+    <release version="0.2.1" date="2026-08-07"/>
+    <release version="0.2.0" date="2026-08-07"/>
+    <release version="0.1.0" date="2026-07-28"/>
+  </releases>
+</component>

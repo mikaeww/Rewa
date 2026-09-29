@@ -13,7 +13,7 @@ platform control.
 
 ## Visual source of truth
 
-The live implementation in `crates/wreath-win-ui/src/renderer.rs` wins over old
+The live implementation in `crates/rewa-win-ui/src/renderer.rs` wins over old
 screenshots and earlier parity notes. The shared baseline is:
 
 - canvas `#0a0a0b`, rail `#0d0d0e`, stage `#0e0e0f`, surface `#111113`;
@@ -59,5 +59,5 @@ reachable and expose an accessible label.
 
 Media playback is excluded from automated capture runs because it can route
 audio through the user's active PipeWire session. Player and Editor playback
-were verified once, then all Gamescope, GStreamer, and Wreath test processes
+were verified once, then all Gamescope, GStreamer, and Rewa test processes
 were stopped; subsequent checks are static and silent.

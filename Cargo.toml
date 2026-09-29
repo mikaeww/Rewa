@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/wreath-core",
-    "crates/wreath-ui",
-    "crates/wreath-win-ui",
-    "crates/wreath-windows",
-    "crates/wreathctl",
-    "crates/wreathd",
+    "crates/rewa-core",
+    "crates/rewa-ui",
+    "crates/rewa-win-ui",
+    "crates/rewa-windows",
+    "crates/rewactl",
+    "crates/rewad",
 ]
 resolver = "3"
 
@@ -13,7 +13,7 @@ resolver = "3"
 version = "1.5.2"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/mika2go/wreath"
+repository = "https://github.com/mikaeww/rewa"
 rust-version = "1.85"
 
 [workspace.dependencies]

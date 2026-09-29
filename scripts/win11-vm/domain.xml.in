@@ -1,6 +1,6 @@
 <domain type='kvm'>
-  <name>Wreath Windows 11</name>
-  <uuid>b6a7f323-f76d-4af8-a5ad-6fd75a88d159</uuid>
+  <name>@NAME@</name>
+  <uuid>@UUID@</uuid>
   <title>Wreath Windows 11 Test VM</title>
   <description>Disposable Windows 11 Enterprise evaluation VM for native Wreath testing.</description>
   <metadata>
@@ -76,7 +76,7 @@
     <controller type='sata' index='0'/>
     <controller type='pci' index='0' model='pcie-root'/>
     <interface type='user'>
-      <mac address='52:54:00:57:11:26'/>
+      <mac address='@MAC@'/>
       <model type='e1000e'/>
     </interface>
     <serial type='pty'><target type='isa-serial' port='0'/></serial>

@@ -8,14 +8,14 @@ Set-StrictMode -Version Latest
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $BinaryDirectory = Join-Path $RepositoryRoot "target/$Target/release"
 $DistributionDirectory = Join-Path $RepositoryRoot "dist/windows"
-$InstallerSource = Join-Path $RepositoryRoot "packaging/windows/wreath.nsi"
-$Installer = Join-Path $DistributionDirectory "Wreath-$Version-x64-setup.exe"
-$Packages = @("wreath-core", "wreath-windows", "wreath-win-ui", "wreathd", "wreathctl")
+$InstallerSource = Join-Path $RepositoryRoot "packaging/windows/rewa.nsi"
+$Installer = Join-Path $DistributionDirectory "Rewa-$Version-x64-setup.exe"
+$Packages = @("rewa-core", "rewa-windows", "rewa-win-ui", "rewad", "rewactl")
 $Executables = [ordered]@{
-    "wreathd.exe" = 4MB
-    "wreath-tray.exe" = 2MB
-    "wreath-win-ui.exe" = 6MB
-    "wreathctl.exe" = 2MB
+    "rewad.exe" = 4MB
+    "rewa-tray.exe" = 2MB
+    "rewa-win-ui.exe" = 6MB
+    "rewactl.exe" = 2MB
 }
 
 if ($env:OS -ne "Windows_NT") {
@@ -35,7 +35,7 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
-public static class WreathWindowsSmoke
+public static class RewaWindowsSmoke
 {
     [StructLayout(LayoutKind.Sequential)]
     public struct Rect
@@ -196,7 +196,7 @@ try {
         }
         Invoke-CargoPackageSet `
             -Arguments @("build", "--locked", "--release", "--target", $Target) `
-            -SelectedPackages @("wreath-win-ui", "wreathd", "wreathctl")
+            -SelectedPackages @("rewa-win-ui", "rewad", "rewactl")
     } finally {
         if ($HadRustFlags) {
             $env:RUSTFLAGS = $PreviousRustFlags
@@ -242,7 +242,7 @@ try {
         throw "NSIS produced an empty installer"
     }
 
-    $SmokeInstallDirectory = Join-Path $env:TEMP "WreathInstallerSmoke-$PID"
+    $SmokeInstallDirectory = Join-Path $env:TEMP "RewaInstallerSmoke-$PID"
     $SmokeUninstaller = Join-Path $SmokeInstallDirectory "Uninstall.exe"
     $SmokeUi = $null
     $SmokePassed = $false
@@ -266,20 +266,20 @@ try {
         if (-not (Test-Path -LiteralPath $SmokeUninstaller -PathType Leaf)) {
             throw "NSIS smoke install omitted Uninstall.exe"
         }
-        foreach ($IconExecutable in @("wreath-win-ui.exe", "wreath-tray.exe", "wreathd.exe")) {
+        foreach ($IconExecutable in @("rewa-win-ui.exe", "rewa-tray.exe", "rewad.exe")) {
             $IconPath = Join-Path $SmokeInstallDirectory $IconExecutable
-            if (-not [WreathWindowsSmoke]::HasApplicationIcon($IconPath)) {
-                throw "$IconExecutable does not contain the Wreath application icon"
+            if (-not [RewaWindowsSmoke]::HasApplicationIcon($IconPath)) {
+                throw "$IconExecutable does not contain the Rewa application icon"
             }
         }
 
         $SmokeUi = Start-Process `
-            -FilePath (Join-Path $SmokeInstallDirectory "wreath-win-ui.exe") `
+            -FilePath (Join-Path $SmokeInstallDirectory "rewa-win-ui.exe") `
             -WorkingDirectory $SmokeInstallDirectory `
             -PassThru
         Start-Sleep -Seconds 5
         $SmokeUi.Refresh()
-        $SmokeTrays = @(Get-Process -Name "wreath-tray" -ErrorAction SilentlyContinue)
+        $SmokeTrays = @(Get-Process -Name "rewa-tray" -ErrorAction SilentlyContinue)
         if ($SmokeUi.HasExited) {
             throw "the installed full application exited during the clean-install smoke test"
         }
@@ -288,7 +288,7 @@ try {
         }
         $SmokeTrayPath = [System.IO.Path]::GetFullPath($SmokeTrays[0].Path)
         $ExpectedTrayPath = [System.IO.Path]::GetFullPath(
-            (Join-Path $SmokeInstallDirectory "wreath-tray.exe")
+            (Join-Path $SmokeInstallDirectory "rewa-tray.exe")
         )
         if ($SmokeTrayPath -ne $ExpectedTrayPath) {
             throw "clean-install smoke test started an unexpected tray: $SmokeTrayPath"
@@ -296,7 +296,7 @@ try {
         if ($SmokeUi.MainWindowHandle -eq [IntPtr]::Zero) {
             throw "the installed full application did not create a visible main window"
         }
-        if (-not [WreathWindowsSmoke]::MoveWindow(
+        if (-not [RewaWindowsSmoke]::MoveWindow(
             $SmokeUi.MainWindowHandle,
             80,
             80,
@@ -308,8 +308,8 @@ try {
         }
         Start-Sleep -Seconds 1
         $SmokeUi.Refresh()
-        $ResizedBounds = [WreathWindowsSmoke+Rect]::new()
-        if (-not [WreathWindowsSmoke]::GetWindowRect(
+        $ResizedBounds = [RewaWindowsSmoke+Rect]::new()
+        if (-not [RewaWindowsSmoke]::GetWindowRect(
             $SmokeUi.MainWindowHandle,
             [ref]$ResizedBounds
         )) {
@@ -321,11 +321,11 @@ try {
         }
 
         $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        $LegacyAutostart = '"C:\Legacy Wreath\wreath-win-ui.exe"'
+        $LegacyAutostart = '"C:\Legacy Rewa\rewa-win-ui.exe"'
         if (-not (Test-Path -LiteralPath $RunKey)) {
             New-Item -Path $RunKey -Force | Out-Null
         }
-        Set-ItemProperty -Path $RunKey -Name "Wreath" -Value $LegacyAutostart
+        Set-ItemProperty -Path $RunKey -Name "Rewa" -Value $LegacyAutostart
 
         $UpgradeExitCode = Invoke-WaitProcess `
             -FilePath $Installer `
@@ -338,22 +338,22 @@ try {
         if (-not $SmokeUi.HasExited) {
             throw "NSIS upgrade left the previous full application running"
         }
-        if (@(Get-Process -Name "wreath-tray" -ErrorAction SilentlyContinue).Count -ne 0) {
+        if (@(Get-Process -Name "rewa-tray" -ErrorAction SilentlyContinue).Count -ne 0) {
             throw "NSIS upgrade left the previous tray running"
         }
-        $MigratedAutostart = (Get-ItemProperty -Path $RunKey -Name "Wreath").Wreath
-        $ExpectedAutostart = '"' + (Join-Path $SmokeInstallDirectory "wreath-tray.exe") + '"'
+        $MigratedAutostart = (Get-ItemProperty -Path $RunKey -Name "Rewa").Rewa
+        $ExpectedAutostart = '"' + (Join-Path $SmokeInstallDirectory "rewa-tray.exe") + '"'
         if ($MigratedAutostart -ne $ExpectedAutostart) {
             throw "NSIS upgrade did not migrate the legacy autostart value"
         }
 
         $SmokeUi = Start-Process `
-            -FilePath (Join-Path $SmokeInstallDirectory "wreath-win-ui.exe") `
+            -FilePath (Join-Path $SmokeInstallDirectory "rewa-win-ui.exe") `
             -WorkingDirectory $SmokeInstallDirectory `
             -PassThru
         Start-Sleep -Seconds 5
         $SmokeUi.Refresh()
-        $UpgradedTrays = @(Get-Process -Name "wreath-tray" -ErrorAction SilentlyContinue)
+        $UpgradedTrays = @(Get-Process -Name "rewa-tray" -ErrorAction SilentlyContinue)
         if ($SmokeUi.HasExited -or $UpgradedTrays.Count -ne 1) {
             throw "the full application and tray did not restart after the NSIS upgrade"
         }
@@ -368,7 +368,7 @@ try {
         do {
             $RemainingProcesses = @(
                 Get-Process `
-                    -Name "wreath-win-ui", "wreath-tray", "wreathd" `
+                    -Name "rewa-win-ui", "rewa-tray", "rewad" `
                     -ErrorAction SilentlyContinue
             )
             if ($RemainingProcesses.Count -eq 0) {
@@ -377,7 +377,7 @@ try {
             Start-Sleep -Milliseconds 250
         } while ([DateTime]::UtcNow -lt $ProcessExitDeadline)
         if ($RemainingProcesses.Count -ne 0) {
-            throw "NSIS uninstall left Wreath background processes running: $($RemainingProcesses.Name -join ', ')"
+            throw "NSIS uninstall left Rewa background processes running: $($RemainingProcesses.Name -join ', ')"
         }
         $FileRemovalDeadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
@@ -398,15 +398,15 @@ try {
             -LiteralPath $RunKey `
             -ErrorAction SilentlyContinue
         if ($null -ne $RemainingRunValues -and
-            $null -ne $RemainingRunValues.PSObject.Properties["Wreath"]) {
-            throw "NSIS uninstall left the Wreath autostart entry installed"
+            $null -ne $RemainingRunValues.PSObject.Properties["Rewa"]) {
+            throw "NSIS uninstall left the Rewa autostart entry installed"
         }
         $SmokeUninstalled = $true
         $SmokePassed = $true
     } finally {
         if (-not $SmokeUninstalled) {
             Get-Process `
-                -Name "wreath-win-ui", "wreath-tray", "wreathd" `
+                -Name "rewa-win-ui", "rewa-tray", "rewad" `
                 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $SmokeUninstaller -PathType Leaf) {
                 [void](Invoke-WaitProcess -FilePath $SmokeUninstaller -ArgumentList @("/S"))
@@ -477,7 +477,7 @@ try {
             UninstallSmokeTest = $true
         }
     }
-    $EvidencePath = Join-Path $DistributionDirectory "Wreath-$Version-x64-build.json"
+    $EvidencePath = Join-Path $DistributionDirectory "Rewa-$Version-x64-build.json"
     $Evidence | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path $EvidencePath
     Write-Output "Built $Installer"
     Write-Output "Evidence $EvidencePath"

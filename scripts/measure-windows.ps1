@@ -39,10 +39,10 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $ResolvedBinDir = [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $BinDir))
-$TrayExe = Join-Path $ResolvedBinDir "wreath-tray.exe"
-$ControlExe = Join-Path $ResolvedBinDir "wreathctl.exe"
+$TrayExe = Join-Path $ResolvedBinDir "rewa-tray.exe"
+$ControlExe = Join-Path $ResolvedBinDir "rewactl.exe"
 $OutputDirectory = Join-Path $RepositoryRoot "perf/windows"
-$Product = if ($MeasureMedalOnly) { "Medal" } else { "Wreath" }
+$Product = if ($MeasureMedalOnly) { "Medal" } else { "Rewa" }
 $RunId = Get-Date -Format "yyyyMMdd-HHmmss"
 $ArtifactPrefix = $Product.ToLowerInvariant()
 $CsvPath = Join-Path $OutputDirectory "$ArtifactPrefix-$RunId.csv"
@@ -259,15 +259,15 @@ function Get-ProcessInventory([System.Diagnostics.Process[]]$Processes) {
     } | Sort-Object Name, Path -Unique)
 }
 
-function Invoke-WreathControl([string]$Control, [string]$Command) {
+function Invoke-RewaControl([string]$Control, [string]$Command) {
     $Output = @(& $Control $Command 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "wreathctl $Command failed: $($Output -join ' ')"
+        throw "rewactl $Command failed: $($Output -join ' ')"
     }
     return $Output -join [Environment]::NewLine
 }
 
-function Invoke-WreathSaveProcess([string]$Control, [double]$StartedAtSeconds) {
+function Invoke-RewaSaveProcess([string]$Control, [double]$StartedAtSeconds) {
     $StandardOutput = [System.IO.Path]::GetTempFileName()
     $StandardError = [System.IO.Path]::GetTempFileName()
     try {
@@ -290,7 +290,7 @@ function Invoke-WreathSaveProcess([string]$Control, [double]$StartedAtSeconds) {
     }
 }
 
-function Complete-WreathSave([object]$Pending, [double]$CompletedAtSeconds) {
+function Complete-RewaSave([object]$Pending, [double]$CompletedAtSeconds) {
     try {
         $Pending.Process.WaitForExit()
         $Output = @(Get-Content -ErrorAction SilentlyContinue -LiteralPath $Pending.StandardOutput)
@@ -314,21 +314,21 @@ function Complete-WreathSave([object]$Pending, [double]$CompletedAtSeconds) {
     }
 }
 
-function Get-WreathStatusCodec([string]$Status) {
+function Get-RewaStatusCodec([string]$Status) {
     $Match = [regex]::Match($Status, '(?m)^codec\s+(h264|hevc|av1)\s*$')
     if (-not $Match.Success) {
-        throw "Wreath status did not report an active hardware codec"
+        throw "Rewa status did not report an active hardware codec"
     }
     return $Match.Groups[1].Value
 }
 
-function Get-WreathStatusAdapter([string]$Status) {
+function Get-RewaStatusAdapter([string]$Status) {
     $Match = [regex]::Match(
         $Status,
         '(?m)^adapter\s+([0-9a-fA-F]{4,8}):([0-9a-fA-F]{4,8})\s+(.+?)\s*$'
     )
     if (-not $Match.Success) {
-        throw "Wreath status did not report the active graphics adapter"
+        throw "Rewa status did not report the active graphics adapter"
     }
     return [pscustomobject]@{
         Name = $Match.Groups[3].Value
@@ -337,34 +337,34 @@ function Get-WreathStatusAdapter([string]$Status) {
     }
 }
 
-function Get-WreathStatusBuffer([string]$Status) {
+function Get-RewaStatusBuffer([string]$Status) {
     $Match = [regex]::Match($Status, '(?m)^buffer\s+(\d+)s\s*$')
     if (-not $Match.Success) {
-        throw "Wreath status did not report the buffered replay duration"
+        throw "Rewa status did not report the buffered replay duration"
     }
     return [int]$Match.Groups[1].Value
 }
 
-function Get-WreathStatusReplaySize([string]$Status) {
+function Get-RewaStatusReplaySize([string]$Status) {
     $Match = [regex]::Match($Status, '(?m)^replay\s+(\d+) bytes\s*$')
     if (-not $Match.Success) {
-        throw "Wreath status did not report encoded replay bytes"
+        throw "Rewa status did not report encoded replay bytes"
     }
     return [long]$Match.Groups[1].Value
 }
 
-function Get-WreathConfiguredDuration([string]$Configuration) {
+function Get-RewaConfiguredDuration([string]$Configuration) {
     $Match = [regex]::Match($Configuration, '(?m)^duration_seconds\s*=\s*(\d+)\s*$')
     if (-not $Match.Success) {
-        throw "Wreath configuration did not report capture.duration_seconds"
+        throw "Rewa configuration did not report capture.duration_seconds"
     }
     return [int]$Match.Groups[1].Value
 }
 
-function Get-WreathConfiguredFrameRate([string]$Configuration) {
+function Get-RewaConfiguredFrameRate([string]$Configuration) {
     $Match = [regex]::Match($Configuration, '(?m)^frames_per_second\s*=\s*(\d+)\s*$')
     if (-not $Match.Success) {
-        throw "Wreath configuration did not report capture.frames_per_second"
+        throw "Rewa configuration did not report capture.frames_per_second"
     }
     return [int]$Match.Groups[1].Value
 }
@@ -381,13 +381,13 @@ function Test-MedalBaseline(
         throw "Medal baseline must be a successful Medal-only run"
     }
     if ($Baseline.ScenarioId -ne $Scenario -or $Baseline.SettingsId -ne $Settings) {
-        throw "Medal baseline scenario/settings do not match this Wreath run"
+        throw "Medal baseline scenario/settings do not match this Rewa run"
     }
     if ([Math]::Abs(([double]($Baseline.DurationMinutes) - $ExpectedDurationMinutes)) -gt 0.000001) {
-        throw "Medal baseline duration does not match this Wreath run"
+        throw "Medal baseline duration does not match this Rewa run"
     }
     if ([int]($Baseline.SampleIntervalSeconds) -ne $ExpectedSampleIntervalSeconds) {
-        throw "Medal baseline sample interval does not match this Wreath run"
+        throw "Medal baseline sample interval does not match this Rewa run"
     }
     if ($Baseline.System.Fingerprint -ne $ExpectedHardwareFingerprint) {
         throw "Medal baseline was captured on different hardware, drivers, or Windows build"
@@ -561,63 +561,63 @@ if ($MedalBaselinePath) {
 }
 
 if ($MeasureMedalOnly) {
-    if ((Get-ProcessGroup @("wreathd", "wreath-tray", "wreath-win-ui")).Count -gt 0) {
-        throw "Wreath is running; shut it down before the isolated Medal baseline"
+    if ((Get-ProcessGroup @("rewad", "rewa-tray", "rewa-win-ui")).Count -gt 0) {
+        throw "Rewa is running; shut it down before the isolated Medal baseline"
     }
     if ((Get-MedalProcessGroup $MedalProcessPattern).Count -eq 0) {
         throw "No process matching '$MedalProcessPattern' is running"
     }
 } else {
     if ((Get-MedalProcessGroup $MedalProcessPattern).Count -gt 0) {
-        throw "Medal is running; close it before the isolated Wreath measurement"
+        throw "Medal is running; close it before the isolated Rewa measurement"
     }
-    if ((Get-ProcessGroup @("wreath-tray")).Count -eq 0) {
+    if ((Get-ProcessGroup @("rewa-tray")).Count -eq 0) {
         Start-Process -FilePath $TrayExe -WorkingDirectory $ResolvedBinDir | Out-Null
     }
 
     $DaemonReady = $false
     for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
-        if ((Get-ProcessGroup @("wreathd")).Count -gt 0) {
+        if ((Get-ProcessGroup @("rewad")).Count -gt 0) {
             $DaemonReady = $true
             break
         }
         Start-Sleep -Seconds 1
     }
-    if (-not $DaemonReady) { throw "wreathd did not start within 30 seconds" }
+    if (-not $DaemonReady) { throw "rewad did not start within 30 seconds" }
 }
 
-$InitialWreathProcesses = @(Get-ProcessGroup @("wreathd", "wreath-tray"))
+$InitialRewaProcesses = @(Get-ProcessGroup @("rewad", "rewa-tray"))
 if (-not $MeasureMedalOnly) {
-    $InitialDaemons = @($InitialWreathProcesses | Where-Object { $_.ProcessName -eq "wreathd" })
-    $InitialTrays = @($InitialWreathProcesses | Where-Object { $_.ProcessName -eq "wreath-tray" })
+    $InitialDaemons = @($InitialRewaProcesses | Where-Object { $_.ProcessName -eq "rewad" })
+    $InitialTrays = @($InitialRewaProcesses | Where-Object { $_.ProcessName -eq "rewa-tray" })
     if ($InitialDaemons.Count -ne 1 -or $InitialTrays.Count -ne 1) {
-        throw "expected exactly one wreathd and one wreath-tray process"
+        throw "expected exactly one rewad and one rewa-tray process"
     }
 }
-$ExpectedWreathProcessIds = @($InitialWreathProcesses.Id | Sort-Object) -join ","
+$ExpectedRewaProcessIds = @($InitialRewaProcesses.Id | Sort-Object) -join ","
 $TargetProcessInventory = if ($MeasureMedalOnly) {
     Get-ProcessInventory (Get-MedalProcessGroup $MedalProcessPattern)
 } else {
-    Get-ProcessInventory $InitialWreathProcesses
+    Get-ProcessInventory $InitialRewaProcesses
 }
 if ($TargetProcessInventory.Count -eq 0 `
     -or @($TargetProcessInventory | Where-Object { [string]::IsNullOrWhiteSpace($_.Sha256) }).Count -gt 0) {
     throw "could not hash every measured executable"
 }
-$WreathConfiguration = if ($MeasureMedalOnly) {
+$RewaConfiguration = if ($MeasureMedalOnly) {
     $null
 } else {
-    Invoke-WreathControl $ControlExe "config"
+    Invoke-RewaControl $ControlExe "config"
 }
 $ConfiguredReplaySeconds = if ($MeasureMedalOnly) {
     $null
 } else {
-    Get-WreathConfiguredDuration $WreathConfiguration
+    Get-RewaConfiguredDuration $RewaConfiguration
 }
 $ConfiguredFramesPerSecond = if ($MeasureMedalOnly) {
     $null
 } else {
-    Get-WreathConfiguredFrameRate $WreathConfiguration
+    Get-RewaConfiguredFrameRate $RewaConfiguration
 }
 $EffectiveMinClipDurationSeconds = if ($MeasureMedalOnly) {
     $MinClipDurationSeconds
@@ -627,28 +627,28 @@ $EffectiveMinClipDurationSeconds = if ($MeasureMedalOnly) {
         [double]$ConfiguredReplaySeconds - $ReplayDurationToleranceSeconds
     )
 }
-$InitialWreathStatus = if ($MeasureMedalOnly) { $null } else {
-    Invoke-WreathControl $ControlExe "status"
+$InitialRewaStatus = if ($MeasureMedalOnly) { $null } else {
+    Invoke-RewaControl $ControlExe "status"
 }
-if (-not $MeasureMedalOnly -and $InitialWreathStatus -notmatch "(?m)^state\s+Recording\s*$") {
-    throw "Wreath is not recording at the start of the measurement"
+if (-not $MeasureMedalOnly -and $InitialRewaStatus -notmatch "(?m)^state\s+Recording\s*$") {
+    throw "Rewa is not recording at the start of the measurement"
 }
 $AvailableHardwareCodecs = if ($MeasureMedalOnly) {
     @()
 } else {
-    @((Invoke-WreathControl $ControlExe "codecs") -split '\r?\n' | Where-Object {
+    @((Invoke-RewaControl $ControlExe "codecs") -split '\r?\n' | Where-Object {
         $_ -match '^(h264|hevc|av1)$'
     })
 }
 $ActiveHardwareCodec = if ($MeasureMedalOnly) {
     $null
 } else {
-    Get-WreathStatusCodec $InitialWreathStatus
+    Get-RewaStatusCodec $InitialRewaStatus
 }
 $ActiveGpuAdapter = if ($MeasureMedalOnly) {
     $null
 } else {
-    Get-WreathStatusAdapter $InitialWreathStatus
+    Get-RewaStatusAdapter $InitialRewaStatus
 }
 if (-not $MeasureMedalOnly -and $AvailableHardwareCodecs -notcontains $ActiveHardwareCodec) {
     throw "active codec '$ActiveHardwareCodec' is absent from the hardware encoder inventory"
@@ -656,10 +656,10 @@ if (-not $MeasureMedalOnly -and $AvailableHardwareCodecs -notcontains $ActiveHar
 $InitialReplayBytes = if ($MeasureMedalOnly) {
     0L
 } else {
-    Get-WreathStatusReplaySize $InitialWreathStatus
+    Get-RewaStatusReplaySize $InitialRewaStatus
 }
 
-$PreviousWreathCpu = @{}
+$PreviousRewaCpu = @{}
 $PreviousMedalCpu = @{}
 $Rows = [System.Collections.Generic.List[object]]::new()
 $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -683,52 +683,52 @@ while ($Stopwatch.Elapsed.TotalSeconds -lt $DurationSeconds) {
     $ElapsedSeconds = [Math]::Max(0.001, $NowSeconds - $LastSampleSeconds)
     $LastSampleSeconds = $NowSeconds
 
-    $WreathProcesses = Get-ProcessGroup @("wreathd", "wreath-tray")
-    $TrayProcesses = Get-ProcessGroup @("wreath-tray")
+    $RewaProcesses = Get-ProcessGroup @("rewad", "rewa-tray")
+    $TrayProcesses = Get-ProcessGroup @("rewa-tray")
     $MedalProcesses = Get-MedalProcessGroup $MedalProcessPattern
     if ($MeasureMedalOnly) {
         if ($MedalProcesses.Count -eq 0) {
             throw "Medal exited during the baseline measurement"
         }
-        if ($WreathProcesses.Count -gt 0) {
-            throw "Wreath started during the isolated Medal baseline"
+        if ($RewaProcesses.Count -gt 0) {
+            throw "Rewa started during the isolated Medal baseline"
         }
     } else {
-        $Daemons = @($WreathProcesses | Where-Object { $_.ProcessName -eq "wreathd" })
-        $Trays = @($WreathProcesses | Where-Object { $_.ProcessName -eq "wreath-tray" })
+        $Daemons = @($RewaProcesses | Where-Object { $_.ProcessName -eq "rewad" })
+        $Trays = @($RewaProcesses | Where-Object { $_.ProcessName -eq "rewa-tray" })
         if ($Daemons.Count -ne 1 -or $Trays.Count -ne 1) {
-            throw "Wreath daemon or tray exited during the measurement"
+            throw "Rewa daemon or tray exited during the measurement"
         }
-        $CurrentWreathProcessIds = @($WreathProcesses.Id | Sort-Object) -join ","
-        if ($CurrentWreathProcessIds -ne $ExpectedWreathProcessIds) {
-            throw "Wreath daemon or tray restarted during the measurement"
+        $CurrentRewaProcessIds = @($RewaProcesses.Id | Sort-Object) -join ","
+        if ($CurrentRewaProcessIds -ne $ExpectedRewaProcessIds) {
+            throw "Rewa daemon or tray restarted during the measurement"
         }
         if ($MedalProcesses.Count -gt 0) {
-            throw "Medal started during the isolated Wreath measurement"
+            throw "Medal started during the isolated Rewa measurement"
         }
     }
 
-    $Wreath = Get-ProcessGroupMetric $WreathProcesses $PreviousWreathCpu $ElapsedSeconds
+    $Rewa = Get-ProcessGroupMetric $RewaProcesses $PreviousRewaCpu $ElapsedSeconds
     $Medal = Get-ProcessGroupMetric $MedalProcesses $PreviousMedalCpu $ElapsedSeconds
     $GpuCounter = Get-GpuCounterSample
-    $WreathIo = Get-ProcessGroupIoMetric $WreathProcesses
+    $RewaIo = Get-ProcessGroupIoMetric $RewaProcesses
     $MedalIo = Get-ProcessGroupIoMetric $MedalProcesses
     $TrayWorkingSetMb = [double](($TrayProcesses | Measure-Object -Property WorkingSet64 -Sum).Sum) / 1MB
 
     $Rows.Add([pscustomobject]@{
         Timestamp = (Get-Date).ToString("o")
         ElapsedSeconds = [Math]::Round($NowSeconds, 3)
-        WreathCpuPercent = [Math]::Round($Wreath.CpuPercent, 4)
-        WreathWorkingSetMb = [Math]::Round($Wreath.WorkingSetMb, 3)
-        WreathPrivateMb = [Math]::Round($Wreath.PrivateMb, 3)
-        WreathGpuEnginePercent = [Math]::Round((Get-ProcessGroupGpuMetric $GpuCounter.Samples $WreathProcesses), 4)
+        RewaCpuPercent = [Math]::Round($Rewa.CpuPercent, 4)
+        RewaWorkingSetMb = [Math]::Round($Rewa.WorkingSetMb, 3)
+        RewaPrivateMb = [Math]::Round($Rewa.PrivateMb, 3)
+        RewaGpuEnginePercent = [Math]::Round((Get-ProcessGroupGpuMetric $GpuCounter.Samples $RewaProcesses), 4)
         GpuCountersAvailable = $GpuCounter.Available
-        WreathReadBytesPerSecond = [Math]::Round($WreathIo.ReadBytesPerSecond, 0)
-        WreathWriteBytesPerSecond = [Math]::Round($WreathIo.WriteBytesPerSecond, 0)
-        WreathIoAvailable = $WreathIo.Available
+        RewaReadBytesPerSecond = [Math]::Round($RewaIo.ReadBytesPerSecond, 0)
+        RewaWriteBytesPerSecond = [Math]::Round($RewaIo.WriteBytesPerSecond, 0)
+        RewaIoAvailable = $RewaIo.Available
         SaveInProgress = $null -ne $PendingSave
-        WreathHandles = $Wreath.Handles
-        WreathThreads = $Wreath.Threads
+        RewaHandles = $Rewa.Handles
+        RewaThreads = $Rewa.Threads
         TrayWorkingSetMb = [Math]::Round($TrayWorkingSetMb, 3)
         MedalCpuPercent = [Math]::Round($Medal.CpuPercent, 4)
         MedalWorkingSetMb = [Math]::Round($Medal.WorkingSetMb, 3)
@@ -742,7 +742,7 @@ while ($Stopwatch.Elapsed.TotalSeconds -lt $DurationSeconds) {
     })
 
     if ($null -ne $PendingSave -and $PendingSave.Process.HasExited) {
-        $SaveResult = Complete-WreathSave $PendingSave $NowSeconds
+        $SaveResult = Complete-RewaSave $PendingSave $NowSeconds
         $SaveDurationsMs.Add([double]$SaveResult.DurationMs)
         if (-not $SaveResult.Success) {
             $SaveFailures++
@@ -763,9 +763,9 @@ while ($Stopwatch.Elapsed.TotalSeconds -lt $DurationSeconds) {
             $SaveFailures++
         } else {
             try {
-                $StatusBeforeSave = Invoke-WreathControl $ControlExe "status"
-                $BufferedSeconds = Get-WreathStatusBuffer $StatusBeforeSave
-                $ObservedReplayBytes.Add((Get-WreathStatusReplaySize $StatusBeforeSave))
+                $StatusBeforeSave = Invoke-RewaControl $ControlExe "status"
+                $BufferedSeconds = Get-RewaStatusBuffer $StatusBeforeSave
+                $ObservedReplayBytes.Add((Get-RewaStatusReplaySize $StatusBeforeSave))
                 if ($BufferedSeconds + $ReplayDurationToleranceSeconds -lt $ConfiguredReplaySeconds) {
                     $ShortReplaySaves++
                 }
@@ -773,7 +773,7 @@ while ($Stopwatch.Elapsed.TotalSeconds -lt $DurationSeconds) {
                 $ShortReplaySaves++
             }
             try {
-                $PendingSave = Invoke-WreathSaveProcess $ControlExe $NowSeconds
+                $PendingSave = Invoke-RewaSaveProcess $ControlExe $NowSeconds
             } catch {
                 $SaveFailures++
             }
@@ -785,7 +785,7 @@ while ($Stopwatch.Elapsed.TotalSeconds -lt $DurationSeconds) {
 if ($null -ne $PendingSave) {
     $PendingSave.Process.WaitForExit()
     $CompletedAtSeconds = $Stopwatch.Elapsed.TotalSeconds
-    $SaveResult = Complete-WreathSave $PendingSave $CompletedAtSeconds
+    $SaveResult = Complete-RewaSave $PendingSave $CompletedAtSeconds
     $SaveDurationsMs.Add([double]$SaveResult.DurationMs)
     if (-not $SaveResult.Success) {
         $SaveFailures++
@@ -806,25 +806,25 @@ $Rows | Export-Csv -NoTypeInformation -Encoding UTF8 -Path $CsvPath
 $WindowSize = [Math]::Max(1, [int][Math]::Floor($Rows.Count * 0.20))
 $FirstWindow = @($Rows | Select-Object -First $WindowSize)
 $LastWindow = @($Rows | Select-Object -Last $WindowSize)
-$AverageWreathRam = Get-Average $Rows "WreathWorkingSetMb"
+$AverageRewaRam = Get-Average $Rows "RewaWorkingSetMb"
 $AverageMedalRam = Get-Average $Rows "MedalWorkingSetMb"
-$PeakWreathRam = Get-Maximum $Rows "WreathWorkingSetMb"
+$PeakRewaRam = Get-Maximum $Rows "RewaWorkingSetMb"
 $PeakMedalRam = Get-Maximum $Rows "MedalWorkingSetMb"
-$AverageWreathCpu = Get-Average $Rows "WreathCpuPercent"
+$AverageRewaCpu = Get-Average $Rows "RewaCpuPercent"
 $AverageMedalCpu = Get-Average $Rows "MedalCpuPercent"
-$AverageWreathGpu = Get-Average $Rows "WreathGpuEnginePercent"
+$AverageRewaGpu = Get-Average $Rows "RewaGpuEnginePercent"
 $AverageMedalGpu = Get-Average $Rows "MedalGpuEnginePercent"
-$AverageWreathWrite = Get-Average $Rows "WreathWriteBytesPerSecond"
+$AverageRewaWrite = Get-Average $Rows "RewaWriteBytesPerSecond"
 $AverageMedalWrite = Get-Average $Rows "MedalWriteBytesPerSecond"
-$IdleWreathRows = @($Rows | Where-Object { -not $_.SaveInProgress })
-$AverageIdleWreathWriteMb = (Get-Average $IdleWreathRows "WreathWriteBytesPerSecond") / 1MB
+$IdleRewaRows = @($Rows | Where-Object { -not $_.SaveInProgress })
+$AverageIdleRewaWriteMb = (Get-Average $IdleRewaRows "RewaWriteBytesPerSecond") / 1MB
 $IoCountersAvailable = if ($MeasureMedalOnly) {
     @($Rows | Where-Object { -not $_.MedalIoAvailable }).Count -eq 0
 } else {
-    @($Rows | Where-Object { -not $_.WreathIoAvailable }).Count -eq 0
+    @($Rows | Where-Object { -not $_.RewaIoAvailable }).Count -eq 0
 }
 $GpuCountersAvailable = @($Rows | Where-Object { -not $_.GpuCountersAvailable }).Count -eq 0
-$MemoryGrowthMb = (Get-Average $LastWindow "WreathWorkingSetMb") - (Get-Average $FirstWindow "WreathWorkingSetMb")
+$MemoryGrowthMb = (Get-Average $LastWindow "RewaWorkingSetMb") - (Get-Average $FirstWindow "RewaWorkingSetMb")
 $PeakTrayRam = [double](($Rows | Measure-Object -Property TrayWorkingSetMb -Maximum).Maximum)
 if ($null -ne $Baseline) {
     $AverageMedalRam = [double]($Baseline.AverageMedalWorkingSetMb)
@@ -834,34 +834,34 @@ if ($null -ne $Baseline) {
     $AverageMedalWrite = [double]($Baseline.AverageMedalWriteBytesPerSecond)
 }
 $RamRatio = if (-not $MeasureMedalOnly -and $null -ne $Baseline) {
-    $AverageWreathRam / $AverageMedalRam
+    $AverageRewaRam / $AverageMedalRam
 } else { $null }
 $PeakRamRatio = if (-not $MeasureMedalOnly -and $null -ne $Baseline) {
-    $PeakWreathRam / $PeakMedalRam
+    $PeakRewaRam / $PeakMedalRam
 } else { $null }
 $CpuRatio = if (-not $MeasureMedalOnly -and $null -ne $Baseline) {
-    $AverageWreathCpu / $AverageMedalCpu
+    $AverageRewaCpu / $AverageMedalCpu
 } else { $null }
 $GpuRatio = if (-not $MeasureMedalOnly -and $null -ne $Baseline) {
-    $AverageWreathGpu / $AverageMedalGpu
+    $AverageRewaGpu / $AverageMedalGpu
 } else { $null }
 $WriteIoRatio = if (-not $MeasureMedalOnly -and $null -ne $Baseline) {
-    $AverageWreathWrite / $AverageMedalWrite
+    $AverageRewaWrite / $AverageMedalWrite
 } else { $null }
 $Failures = [System.Collections.Generic.List[string]]::new()
 $ClipValidations = [System.Collections.Generic.List[object]]::new()
-$FinalWreathStatus = $null
-$FinalWreathConfiguration = $null
+$FinalRewaStatus = $null
+$FinalRewaConfiguration = $null
 
 if (-not $MeasureMedalOnly) {
     try {
-        $FinalWreathStatus = Invoke-WreathControl $ControlExe "status"
-        if ($FinalWreathStatus -notmatch "(?m)^state\s+Recording\s*$") {
-            $Failures.Add("Wreath was not recording at the end of the measurement")
+        $FinalRewaStatus = Invoke-RewaControl $ControlExe "status"
+        if ($FinalRewaStatus -notmatch "(?m)^state\s+Recording\s*$") {
+            $Failures.Add("Rewa was not recording at the end of the measurement")
         }
-        $FinalActiveHardwareCodec = Get-WreathStatusCodec $FinalWreathStatus
-        $FinalGpuAdapter = Get-WreathStatusAdapter $FinalWreathStatus
-        $ObservedReplayBytes.Add((Get-WreathStatusReplaySize $FinalWreathStatus))
+        $FinalActiveHardwareCodec = Get-RewaStatusCodec $FinalRewaStatus
+        $FinalGpuAdapter = Get-RewaStatusAdapter $FinalRewaStatus
+        $ObservedReplayBytes.Add((Get-RewaStatusReplaySize $FinalRewaStatus))
         if ($FinalActiveHardwareCodec -ne $ActiveHardwareCodec) {
             $Failures.Add("active hardware codec changed during the measurement")
         }
@@ -870,12 +870,12 @@ if (-not $MeasureMedalOnly) {
             $FinalGpuAdapter.Name -ne $ActiveGpuAdapter.Name) {
             $Failures.Add("active graphics adapter changed during the measurement")
         }
-        $FinalWreathConfiguration = Invoke-WreathControl $ControlExe "config"
-        if ($FinalWreathConfiguration -ne $WreathConfiguration) {
-            $Failures.Add("Wreath configuration changed during the measurement")
+        $FinalRewaConfiguration = Invoke-RewaControl $ControlExe "config"
+        if ($FinalRewaConfiguration -ne $RewaConfiguration) {
+            $Failures.Add("Rewa configuration changed during the measurement")
         }
     } catch {
-        $Failures.Add("final Wreath health check failed: $($_.Exception.Message)")
+        $Failures.Add("final Rewa health check failed: $($_.Exception.Message)")
     }
 }
 $PeakEncodedReplayBytes = if ($ObservedReplayBytes.Count -eq 0) {
@@ -913,16 +913,16 @@ if (-not $MeasureMedalOnly -and $SaveAttempts -gt 0) {
 }
 
 if (-not $MeasureMedalOnly -and $null -ne $Baseline -and $RamRatio -gt $MaxRelativeRam) {
-    $Failures.Add("Wreath RAM ratio $([Math]::Round($RamRatio, 3)) exceeds $MaxRelativeRam")
+    $Failures.Add("Rewa RAM ratio $([Math]::Round($RamRatio, 3)) exceeds $MaxRelativeRam")
 }
 if (-not $MeasureMedalOnly -and $null -ne $Baseline -and $PeakRamRatio -gt $MaxRelativePeakRam) {
-    $Failures.Add("Wreath peak RAM ratio $([Math]::Round($PeakRamRatio, 3)) exceeds $MaxRelativePeakRam")
+    $Failures.Add("Rewa peak RAM ratio $([Math]::Round($PeakRamRatio, 3)) exceeds $MaxRelativePeakRam")
 }
 if (-not $MeasureMedalOnly -and $null -ne $Baseline -and $CpuRatio -gt $MaxRelativeCpu) {
-    $Failures.Add("Wreath CPU ratio $([Math]::Round($CpuRatio, 3)) exceeds $MaxRelativeCpu")
+    $Failures.Add("Rewa CPU ratio $([Math]::Round($CpuRatio, 3)) exceeds $MaxRelativeCpu")
 }
 if (-not $MeasureMedalOnly -and $null -ne $Baseline -and $GpuRatio -gt $MaxRelativeGpu) {
-    $Failures.Add("Wreath GPU ratio $([Math]::Round($GpuRatio, 3)) exceeds $MaxRelativeGpu")
+    $Failures.Add("Rewa GPU ratio $([Math]::Round($GpuRatio, 3)) exceeds $MaxRelativeGpu")
 }
 if (-not $IoCountersAvailable) {
     $Failures.Add("process I/O counters were unavailable for one or more samples")
@@ -930,17 +930,17 @@ if (-not $IoCountersAvailable) {
 if (-not $GpuCountersAvailable) {
     $Failures.Add("GPU engine counters were unavailable for one or more samples")
 }
-if (-not $MeasureMedalOnly -and $IdleWreathRows.Count -eq 0) {
-    $Failures.Add("measurement contains no idle Wreath I/O samples")
+if (-not $MeasureMedalOnly -and $IdleRewaRows.Count -eq 0) {
+    $Failures.Add("measurement contains no idle Rewa I/O samples")
 }
 if (-not $MeasureMedalOnly -and $null -ne $Baseline -and $WriteIoRatio -gt $MaxRelativeWriteIo) {
-    $Failures.Add("Wreath write-I/O ratio $([Math]::Round($WriteIoRatio, 3)) exceeds $MaxRelativeWriteIo")
+    $Failures.Add("Rewa write-I/O ratio $([Math]::Round($WriteIoRatio, 3)) exceeds $MaxRelativeWriteIo")
 }
-if (-not $MeasureMedalOnly -and $AverageIdleWreathWriteMb -gt $MaxIdleWriteMbPerSecond) {
-    $Failures.Add("Wreath idle write I/O $([Math]::Round($AverageIdleWreathWriteMb, 3)) MiB/s exceeds $MaxIdleWriteMbPerSecond MiB/s")
+if (-not $MeasureMedalOnly -and $AverageIdleRewaWriteMb -gt $MaxIdleWriteMbPerSecond) {
+    $Failures.Add("Rewa idle write I/O $([Math]::Round($AverageIdleRewaWriteMb, 3)) MiB/s exceeds $MaxIdleWriteMbPerSecond MiB/s")
 }
 if (-not $MeasureMedalOnly -and $MemoryGrowthMb -gt $MaxMemoryGrowthMb) {
-    $Failures.Add("Wreath working-set growth $([Math]::Round($MemoryGrowthMb, 2)) MiB exceeds $MaxMemoryGrowthMb MiB")
+    $Failures.Add("Rewa working-set growth $([Math]::Round($MemoryGrowthMb, 2)) MiB exceeds $MaxMemoryGrowthMb MiB")
 }
 if (-not $MeasureMedalOnly -and $PeakTrayRam -gt $MaxTrayWorkingSetMb) {
     $Failures.Add("Tray peak $([Math]::Round($PeakTrayRam, 2)) MiB exceeds $MaxTrayWorkingSetMb MiB")
@@ -968,13 +968,13 @@ $Summary = [ordered]@{
     MatrixTags = @($MatrixTags | Sort-Object -Unique)
     System = $SystemMetadata
     Processes = $TargetProcessInventory
-    WreathConfiguration = $WreathConfiguration
+    RewaConfiguration = $RewaConfiguration
     AvailableHardwareCodecs = @($AvailableHardwareCodecs)
     ActiveHardwareCodec = $ActiveHardwareCodec
     ActiveGpuAdapter = $ActiveGpuAdapter
-    FinalWreathConfiguration = $FinalWreathConfiguration
-    InitialWreathStatus = $InitialWreathStatus
-    FinalWreathStatus = $FinalWreathStatus
+    FinalRewaConfiguration = $FinalRewaConfiguration
+    InitialRewaStatus = $InitialRewaStatus
+    FinalRewaStatus = $FinalRewaStatus
     MedalBaseline = $ResolvedBaselinePath
     MedalBaselineRunId = if ($null -eq $Baseline) { $null } else { $Baseline.RunId }
     DurationMinutes = $DurationMinutes
@@ -1008,25 +1008,25 @@ $Summary = [ordered]@{
     PeakEncodedReplayMb = [Math]::Round($PeakEncodedReplayMb, 3)
     ValidatedClips = $ClipValidations.Count
     ClipValidations = @($ClipValidations)
-    AverageWreathWorkingSetMb = [Math]::Round($AverageWreathRam, 3)
+    AverageRewaWorkingSetMb = [Math]::Round($AverageRewaRam, 3)
     AverageMedalWorkingSetMb = [Math]::Round($AverageMedalRam, 3)
-    WreathToMedalRamRatio = if ($null -eq $RamRatio) { $null } else { [Math]::Round($RamRatio, 4) }
-    PeakWreathWorkingSetMb = [Math]::Round($PeakWreathRam, 3)
+    RewaToMedalRamRatio = if ($null -eq $RamRatio) { $null } else { [Math]::Round($RamRatio, 4) }
+    PeakRewaWorkingSetMb = [Math]::Round($PeakRewaRam, 3)
     PeakMedalWorkingSetMb = [Math]::Round($PeakMedalRam, 3)
-    WreathToMedalPeakRamRatio = if ($null -eq $PeakRamRatio) { $null } else { [Math]::Round($PeakRamRatio, 4) }
-    AverageWreathCpuPercent = [Math]::Round($AverageWreathCpu, 4)
+    RewaToMedalPeakRamRatio = if ($null -eq $PeakRamRatio) { $null } else { [Math]::Round($PeakRamRatio, 4) }
+    AverageRewaCpuPercent = [Math]::Round($AverageRewaCpu, 4)
     AverageMedalCpuPercent = [Math]::Round($AverageMedalCpu, 4)
-    WreathToMedalCpuRatio = if ($null -eq $CpuRatio) { $null } else { [Math]::Round($CpuRatio, 4) }
-    AverageWreathGpuEnginePercent = [Math]::Round($AverageWreathGpu, 4)
+    RewaToMedalCpuRatio = if ($null -eq $CpuRatio) { $null } else { [Math]::Round($CpuRatio, 4) }
+    AverageRewaGpuEnginePercent = [Math]::Round($AverageRewaGpu, 4)
     AverageMedalGpuEnginePercent = [Math]::Round($AverageMedalGpu, 4)
-    WreathToMedalGpuRatio = if ($null -eq $GpuRatio) { $null } else { [Math]::Round($GpuRatio, 4) }
+    RewaToMedalGpuRatio = if ($null -eq $GpuRatio) { $null } else { [Math]::Round($GpuRatio, 4) }
     IoCountersAvailable = $IoCountersAvailable
     GpuCountersAvailable = $GpuCountersAvailable
-    AverageWreathWriteBytesPerSecond = [Math]::Round($AverageWreathWrite, 3)
+    AverageRewaWriteBytesPerSecond = [Math]::Round($AverageRewaWrite, 3)
     AverageMedalWriteBytesPerSecond = [Math]::Round($AverageMedalWrite, 3)
-    WreathToMedalWriteIoRatio = if ($null -eq $WriteIoRatio) { $null } else { [Math]::Round($WriteIoRatio, 4) }
-    AverageIdleWreathWriteMbPerSecond = [Math]::Round($AverageIdleWreathWriteMb, 4)
-    WreathMemoryGrowthMb = [Math]::Round($MemoryGrowthMb, 3)
+    RewaToMedalWriteIoRatio = if ($null -eq $WriteIoRatio) { $null } else { [Math]::Round($WriteIoRatio, 4) }
+    AverageIdleRewaWriteMbPerSecond = [Math]::Round($AverageIdleRewaWriteMb, 4)
+    RewaMemoryGrowthMb = [Math]::Round($MemoryGrowthMb, 3)
     PeakTrayWorkingSetMb = [Math]::Round($PeakTrayRam, 3)
     Passed = $Failures.Count -eq 0
     Failures = @($Failures)

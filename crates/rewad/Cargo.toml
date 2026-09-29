@@ -1,0 +1,16 @@
+[package]
+name = "rewad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rewa-core = { path = "../rewa-core" }
+
+[target.'cfg(windows)'.dependencies]
+rewa-windows = { path = "../rewa-windows" }
+
+[build-dependencies]
+winresource = "0.1.31"

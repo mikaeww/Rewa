@@ -2,16 +2,16 @@
 
 The Windows edition is complete only when it exposes the full clip-management
 workflow while preserving the low-overhead background recorder. The live
-implementation in `crates/wreath-win-ui/src/renderer.rs` is the visual
+implementation in `crates/rewa-win-ui/src/renderer.rs` is the visual
 reference; Windows platform conventions are used where the operating system
 supplies the interaction, such as folder selection and window chrome.
 
 ## Process boundary
 
-- `wreathd.exe` owns capture, encoding, hotkeys, and the replay buffer.
-- `wreath-tray.exe` owns the notification icon, recovery loop, and autostart. It
+- `rewad.exe` owns capture, encoding, hotkeys, and the replay buffer.
+- `rewa-tray.exe` owns the notification icon, recovery loop, and autostart. It
   must remain below the existing 64 MiB peak-working-set gate.
-- `wreath-win-ui.exe` owns the visible application window and exits when that
+- `rewa-win-ui.exe` owns the visible application window and exits when that
   window is closed. Closing it must not stop the tray or recorder.
 - Tray and UI communicate with the daemon through the existing named-pipe IPC.
 - Starting the full application more than once activates the existing window;
@@ -58,7 +58,7 @@ square inside their box, so a non-square target cannot stretch them. One
 stroke weight scales with the icon size and stays between 1.4 and 2.1 px.
 
 The interface ships German and English. `System` follows the Windows display
-language; every visible string lives in `crates/wreath-win-ui/src/text.rs`, and
+language; every visible string lives in `crates/rewa-win-ui/src/text.rs`, and
 switching the language re-renders without a restart.
 
 Windows uses Segoe UI Variable when available and Segoe UI as the fallback:
@@ -110,8 +110,8 @@ Corner radii stay between 4 and 8 px.
 
 - Navigation: Clips, Collections, Einstellungen. There is no dashboard page;
   the clips library is the default view.
-- Tray: Open Wreath, Save replay, Pause, Resume, Open clips, Open settings file,
-  Reload settings, toggle start with Windows, and Exit Wreath.
+- Tray: Open Rewa, Save replay, Pause, Resume, Open clips, Open settings file,
+  Reload settings, toggle start with Windows, and Exit Rewa.
 - A normal tray click opens or focuses the full application.
 - Closing the application window leaves tray and recorder running.
 

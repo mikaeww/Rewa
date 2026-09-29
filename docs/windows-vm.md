@@ -17,9 +17,9 @@ prompting EFI image with Microsoft's no-prompt EFI image from that same ISO. It
 does not report success until Windows Setup is writing to the system disk. A
 stale pre-installation suspend state is discarded automatically when the disk
 is still empty.
-The VM uses 8 vCPUs and 12 GB RAM. It creates the local `Wreath` test account,
+The VM uses 8 vCPUs and 12 GB RAM. It creates the local `Wreath` test account (the VMs predate the rename to Rewa),
 logs in automatically, installs the QEMU/SPICE guest tools, copies sample clips,
-and opens the locally built Wreath application.
+and opens the locally built Rewa application.
 
 The fallback password is `WreathTest!2026`. The VM uses user-mode NAT and does
 not expose incoming host ports.
@@ -40,7 +40,7 @@ the running VM with:
 ```
 
 When the QEMU guest agent is available, deployment starts automatically. If it
-is not ready, double-click **Wreath aus Linux aktualisieren** on the Windows
+is not ready, double-click **Rewa aus Linux aktualisieren** on the Windows
 desktop. No administrator or Linux password is required.
 
 The VM data lives below `~/.local/share/wreath-win11`; the repository contains
@@ -51,7 +51,7 @@ a per-user Flatpak.
 
 The virtual QXL display is suitable for UI layout, DPI/resize behavior,
 keyboard shortcuts, tray behavior, settings, player/editor flows, clip library,
-upgrades, and uninstall-style file replacement. Wreath intentionally requires a
+upgrades, and uninstall-style file replacement. Rewa intentionally requires a
 hardware Media Foundation encoder, so real capture cannot succeed on the
 virtual QXL adapter. Capture, encoder choice, audio timing, sleep/resume, and
 multi-monitor validation need a physical Windows system or dedicated GPU

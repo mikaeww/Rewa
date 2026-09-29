@@ -1,0 +1,22 @@
+[Unit]
+Description=Rewa instant replay daemon
+Documentation=https://github.com/mikaeww/rewa
+After=pipewire.service pipewire-pulse.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rewad
+# Hyprland is configured automatically. Other desktops receive manual shortcut guidance.
+ExecStartPost=-/usr/bin/rewactl bind
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+KillMode=mixed
+UMask=0077
+IPAddressDeny=any
+# gpu-screen-recorder's capability-based KMS helper needs the host mount namespace.
+LimitNOFILE=256
+
+[Install]
+WantedBy=default.target

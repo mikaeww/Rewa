@@ -7,9 +7,9 @@ as a clip when you press a key. Written in Rust.
 
 Nothing is uploaded, there is no account and no telemetry.
 
-[Download for Windows](https://github.com/mikaeww/Wreath/releases/latest) ·
+[Download for Windows](https://github.com/mikaeww/Rewa/releases/latest) ·
 [Linux install guide](docs/install.md) ·
-[Report an issue](https://github.com/mikaeww/Wreath/issues)
+[Report an issue](https://github.com/mikaeww/Rewa/issues)
 
 > [!NOTE]
 > Windows is the main platform. On Linux the recorder works, the window is still unfinished.
@@ -26,13 +26,13 @@ Nothing is uploaded, there is no account and no telemetry.
 
 ## Install
 
-**Windows 10 / 11:** download the setup from the [latest release](https://github.com/mikaeww/Wreath/releases/latest)
+**Windows 10 / 11:** download the setup from the [latest release](https://github.com/mikaeww/Rewa/releases/latest)
 and run it as your normal user. It is not code-signed yet, so SmartScreen will warn about it.
 
 **Arch / CachyOS:** tested on Hyprland and KDE Plasma.
 
 ```sh
-git clone https://github.com/mikaeww/Wreath.git rewa
+git clone https://github.com/mikaeww/Rewa.git rewa
 cd rewa
 ./scripts/install-arch.sh --install-deps
 ```
@@ -43,7 +43,7 @@ cd rewa
 | --- | --- |
 | `Ctrl+Alt+R` | Save the replay on Windows |
 | `Super+Shift+R` | Save the replay on Hyprland |
-| `wreathctl save` | Bind this to a shortcut on other desktops |
+| `rewactl save` | Bind this to a shortcut on other desktops |
 
 ## Building
 

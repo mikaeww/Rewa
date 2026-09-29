@@ -1,15 +1,15 @@
 # Windows performance and hardware validation
 
-The main Windows release criterion is not merely that capture works: Wreath
+The main Windows release criterion is not merely that capture works: Rewa
 must use materially fewer background resources than Medal under the same replay
 settings. The default automated comparison gates define "materially fewer" as:
 
-- average combined Wreath working set at most 50% of the Medal process group;
-- peak combined Wreath working set at most 60% of the Medal process group;
-- average combined Wreath CPU at most 70% of the Medal process group;
-- average combined Wreath GPU-engine load at most 85% of Medal;
-- average Wreath process write I/O at most 25% of Medal;
-- idle Wreath process write I/O at most 1 MiB/s outside replay saves;
+- average combined Rewa working set at most 50% of the Medal process group;
+- peak combined Rewa working set at most 60% of the Medal process group;
+- average combined Rewa CPU at most 70% of the Medal process group;
+- average combined Rewa GPU-engine load at most 85% of Medal;
+- average Rewa process write I/O at most 25% of Medal;
+- idle Rewa process write I/O at most 1 MiB/s outside replay saves;
 - no more than 32 MiB working-set growth across a run;
 - native tray peak working set at most 64 MiB;
 - encoded replay payload never above the fixed 512 MiB process limit;
@@ -23,18 +23,18 @@ matrix. They must not be loosened merely to make a failing build pass.
 ## Fair comparison protocol
 
 1. Reboot, install current GPU/audio drivers, and let Windows finish updates.
-2. Disable unrelated overlays and background capture tools. Medal and Wreath
+2. Disable unrelated overlays and background capture tools. Medal and Rewa
    are measured in separate phases and the script rejects the other recorder if
    it is running. Keep the same deterministic game/application scene for every
    run.
 3. Configure both products to the same display, resolution, frame rate, codec,
    replay duration, cursor setting, desktop audio, and microphone setting.
 4. Measure Medal first and retain its JSON summary, then completely close Medal
-   before measuring Wreath against that baseline.
+   before measuring Rewa against that baseline.
 5. Discard the first warm-up run. Keep at least three 30-minute measured runs.
 6. Run the four-hour soak separately. Do not average it into the short runs.
 
-Build the release binaries, shut down Wreath, start Medal recording, and capture
+Build the release binaries, shut down Rewa, start Medal recording, and capture
 the isolated baseline from PowerShell. `ScenarioId` identifies the repeatable
 scene; `SettingsId` identifies the complete matching capture configuration:
 
@@ -47,7 +47,7 @@ scene; `SettingsId` identifies the complete matching capture configuration:
 ```
 
 Close Medal, reproduce the same scene, and pass the resulting baseline JSON to
-the isolated Wreath phase:
+the isolated Rewa phase:
 
 ```powershell
 ./scripts/measure-windows.ps1 `
@@ -60,11 +60,11 @@ the isolated Wreath phase:
   -MedalBaselinePath perf/windows/medal-YYYYMMDD-HHMMSS.json
 ```
 
-The script starts Wreath if necessary and writes a timestamped CSV plus JSON
+The script starts Rewa if necessary and writes a timestamped CSV plus JSON
 summary below `perf/windows/`. It rejects baseline reuse when the scenario,
 settings, duration, sample interval, Windows build, CPU, GPU, driver, logical CPU
 count, or installed RAM differs. The summary records system metadata, executable
-versions, Wreath's complete TOML configuration, the hardware codecs exposed by
+versions, Rewa's complete TOML configuration, the hardware codecs exposed by
 Media Foundation, and the codec actually selected by the running pipeline. The
 active codec must remain stable and appear in that hardware inventory. It also
 records the exact D3D11 adapter name and PCI vendor/device IDs at the beginning
@@ -82,9 +82,9 @@ process transfer counters and intentionally include file, pipe, and device I/O;
 they are a conservative load gate rather than a physical-disk-only estimate.
 Unavailable GPU engine counters likewise fail the run instead of producing a
 false zero-load result. The same requirement applies to the isolated Medal
-baseline and every Wreath matrix row.
+baseline and every Rewa matrix row.
 
-Install `ffprobe` from FFmpeg before the Wreath phase. After the timed measurement
+Install `ffprobe` from FFmpeg before the Rewa phase. After the timed measurement
 has ended, every saved clip is checked for a video stream, the expected audio
 stream, the configured replay duration with at most two seconds of GOP tolerance,
 keyframe-clean start, monotonic DTS, bounded audio/video duration skew, and at
@@ -94,13 +94,13 @@ nominal 60-fps header cannot hide dropped frames. The live ring fill level is
 checked before every save as well. Clip hashes and probe results are included in
 the JSON summary. Raw output belongs in test artifacts, not in Git.
 
-Use `-AllowVideoOnly` only for a matrix row whose Wreath configuration has both
+Use `-AllowVideoOnly` only for a matrix row whose Rewa configuration has both
 desktop and microphone audio disabled. `-MinClipDurationSeconds` may tighten the
 duration gate but cannot reduce it below the configured duration tolerance.
 `-MaxAudioVideoSkewSeconds` adjusts only the A/V structural gate; the resource
 gates remain unchanged.
 
-For a Wreath-only four-hour soak:
+For a Rewa-only four-hour soak:
 
 ```powershell
 ./scripts/measure-windows.ps1 `
@@ -122,7 +122,7 @@ size, idle write I/O, and replay saves remain hard gates.
 | Audio | None, desktop only, microphone only, desktop + microphone |
 | Displays | Single display, secondary display, mixed refresh rates |
 | Lifecycle | Pause/resume, display mode change, sleep/resume, logout/login |
-| Duration | 30-minute comparison and four-hour Wreath soak |
+| Duration | 30-minute comparison and four-hour Rewa soak |
 
 Every saved MP4 must be checked for playable video, audible selected sources,
 monotonic duration, sustained frame rate, A/V sync at the beginning and end, and
@@ -151,11 +151,11 @@ that the complete matrix is present:
 ./scripts/verify-windows-matrix.ps1
 ```
 
-Every Wreath summary must have exactly one Windows, GPU, resolution, audio, and
+Every Rewa summary must have exactly one Windows, GPU, resolution, audio, and
 display tag. Add lifecycle and manual-check tags only to runs where those checks
 were actually completed. The verifier requires three passing 30-minute Medal
 comparisons per GPU vendor, H.264 on every vendor, every additional codec exposed
-by each tested machine, and at least one passing four-hour Wreath-only soak. A
+by each tested machine, and at least one passing four-hour Rewa-only soak. A
 GPU tag is accepted only when its vendor matches the adapter actually opened by
 D3D11, so an installed but unused discrete GPU cannot satisfy a hybrid-system
 row. Every matrix row must also contain valid process I/O evidence and enforce

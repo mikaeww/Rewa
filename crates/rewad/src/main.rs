@@ -1,0 +1,431 @@
+#[cfg(target_os = "linux")]
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::io::{self, BufReader};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+use std::process::ExitCode;
+#[cfg(target_os = "linux")]
+use std::thread;
+#[cfg(target_os = "linux")]
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "linux")]
+use rewa_core::config::Config;
+#[cfg(target_os = "linux")]
+use rewa_core::display;
+#[cfg(target_os = "linux")]
+use rewa_core::engine::{GpuScreenRecorder, GpuScreenRecorderBackend};
+#[cfg(target_os = "linux")]
+use rewa_core::ipc::{self, DaemonState, Request, Response};
+#[cfg(target_os = "linux")]
+use rewa_core::paths::AppPaths;
+#[cfg(target_os = "linux")]
+use rewa_core::replay::{ReplayBackend, ReplaySpec};
+#[cfg(target_os = "linux")]
+use rewa_core::shortcuts;
+
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "linux")]
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(target_os = "linux")]
+const RECORDER_READY_DELAY: Duration = Duration::from_millis(750);
+#[cfg(target_os = "linux")]
+const SHORTCUT_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+#[cfg(target_os = "linux")]
+struct Daemon {
+    paths: AppPaths,
+    config: Config,
+    state: DaemonState,
+    monitor: Option<String>,
+    replay: Option<ReplaySpec>,
+    backend: GpuScreenRecorderBackend,
+    recorder: Option<GpuScreenRecorder>,
+    capture_requested: bool,
+    capture_started_at: Option<Instant>,
+    restart_attempts: u32,
+    next_restart_at: Option<Instant>,
+    next_shortcut_check_at: Instant,
+    last_error: Option<String>,
+    shutdown: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> ExitCode {
+    if let Err(error) = run() {
+        eprintln!("rewad: {error}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+#[cfg(target_os = "windows")]
+fn main() -> ExitCode {
+    if let Err(error) = windows::run() {
+        rewa_core::diagnostic!("Rewa daemon stopped: {error}");
+        eprintln!("rewad: {error}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+#[cfg(target_os = "linux")]
+fn run() -> Result<(), String> {
+    let paths = AppPaths::discover();
+    let config = Config::load(&paths).map_err(|error| error.to_string())?;
+    if !paths.config_file.exists() {
+        config.save(&paths).map_err(|error| error.to_string())?;
+    }
+    let monitors = display::monitors().map_err(|error| error.to_string())?;
+    let selected_monitor =
+        display::resolve_monitor(&monitors, config.capture.monitor.as_deref()).cloned();
+    let monitor = selected_monitor
+        .as_ref()
+        .map(|monitor| monitor.name.clone());
+    let replay = selected_monitor
+        .as_ref()
+        .map(|monitor| ReplaySpec::from_config(&config, monitor));
+
+    if let Some(parent) = paths.socket_file().parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    if paths.socket_file().exists() {
+        fs::remove_file(paths.socket_file()).map_err(|error| error.to_string())?;
+    }
+    let listener = UnixListener::bind(paths.socket_file()).map_err(|error| error.to_string())?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    fs::set_permissions(paths.socket_file(), fs::Permissions::from_mode(0o600))
+        .map_err(|error| error.to_string())?;
+
+    let mut daemon = Daemon {
+        paths,
+        config,
+        state: DaemonState::Starting,
+        monitor,
+        replay,
+        backend: GpuScreenRecorderBackend,
+        recorder: None,
+        capture_requested: true,
+        capture_started_at: None,
+        restart_attempts: 0,
+        next_restart_at: None,
+        next_shortcut_check_at: Instant::now(),
+        last_error: None,
+        shutdown: false,
+    };
+    daemon.start_capture();
+    eprintln!("rewad: ready on {}", daemon.paths.socket_file().display());
+
+    while !daemon.shutdown {
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    if let Err(error) = daemon.handle(stream) {
+                        eprintln!("rewad: {error}");
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => {
+                    eprintln!("rewad: socket error: {error}");
+                    break;
+                }
+            }
+            if daemon.shutdown {
+                break;
+            }
+        }
+        daemon.maintain_capture();
+        if !daemon.shutdown {
+            thread::sleep(HEALTH_CHECK_INTERVAL);
+        }
+    }
+    let _ = fs::remove_file(daemon.paths.socket_file());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+impl Daemon {
+    fn handle(&mut self, mut stream: UnixStream) -> Result<(), String> {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("socket timeout setup failed: {error}"))?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .map_err(|error| format!("socket timeout setup failed: {error}"))?;
+        let mut reader = BufReader::new(
+            stream
+                .try_clone()
+                .map_err(|error| format!("socket clone failed: {error}"))?,
+        );
+        let request = ipc::read_request(&mut reader).map_err(|error| error.to_string())?;
+        let response = self.respond(request);
+        ipc::write_response(&mut stream, &response).map_err(|error| error.to_string())
+    }
+
+    fn respond(&mut self, request: Request) -> Response {
+        match request {
+            Request::Status => self.status(),
+            Request::Save => self.save_replay(),
+            Request::Pause => self.pause_capture(),
+            Request::Resume => self.resume_capture(),
+            Request::SetHotkey { .. } => Response::Error {
+                message: "shortcut updates through the app are available on Windows".into(),
+            },
+            Request::Reload => self.reload(),
+            Request::Shutdown => {
+                self.capture_requested = false;
+                self.stop_capture();
+                self.shutdown = true;
+                Response::Ok
+            }
+        }
+    }
+
+    fn start_capture(&mut self) {
+        if !self.capture_requested {
+            return;
+        }
+        self.state = DaemonState::Starting;
+        self.next_restart_at = None;
+        let Some(spec) = self.replay.as_ref() else {
+            self.fail("no active capture target found".into());
+            return;
+        };
+        match self.backend.start(spec) {
+            Ok(recorder) => {
+                eprintln!(
+                    "rewad: recording {} at {} fps (estimated buffer {} MB)",
+                    spec.monitor,
+                    spec.frames_per_second,
+                    spec.estimated_buffer_megabytes()
+                );
+                self.recorder = Some(recorder);
+                self.capture_started_at = Some(Instant::now());
+                self.restart_attempts = 0;
+                self.next_restart_at = None;
+                self.state = DaemonState::Recording;
+                self.last_error = None;
+            }
+            Err(error) => self.fail(error.to_string()),
+        }
+    }
+
+    fn status(&mut self) -> Response {
+        self.check_recorder();
+        Response::Status {
+            state: self.state,
+            monitor: self.monitor.clone(),
+            source: self.monitor.clone(),
+            codec: None,
+            adapter: None,
+            replay_bytes: None,
+            buffered_seconds: self
+                .capture_started_at
+                .map(|started| {
+                    started
+                        .elapsed()
+                        .as_secs()
+                        .min(u64::from(self.config.capture.duration_seconds))
+                        as u16
+                })
+                .unwrap_or(0),
+            error: self.last_error.clone(),
+        }
+    }
+
+    fn save_replay(&mut self) -> Response {
+        self.check_recorder();
+        if self.recorder.is_none() && self.capture_requested {
+            self.restart_attempts = 0;
+            self.next_restart_at = None;
+            self.start_capture();
+        }
+        if let Some(started) = self.capture_started_at {
+            let elapsed = started.elapsed();
+            if elapsed < RECORDER_READY_DELAY {
+                thread::sleep(RECORDER_READY_DELAY - elapsed);
+                self.check_recorder();
+            }
+        }
+        let Some(recorder) = self.recorder.as_mut() else {
+            return Response::Error {
+                message: self
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "recorder is not running".into()),
+            };
+        };
+        match recorder.save() {
+            Ok(path) => Response::Saved { path },
+            Err(error) => {
+                let message = error.to_string();
+                self.fail(message.clone());
+                Response::Error { message }
+            }
+        }
+    }
+
+    fn stop_capture(&mut self) {
+        self.capture_started_at = None;
+        if let Some(mut recorder) = self.recorder.take()
+            && let Err(error) = recorder.stop()
+        {
+            eprintln!("rewad: {error}");
+        }
+    }
+
+    fn pause_capture(&mut self) -> Response {
+        self.capture_requested = false;
+        self.next_restart_at = None;
+        self.stop_capture();
+        self.state = DaemonState::Paused;
+        self.last_error = None;
+        Response::Ok
+    }
+
+    fn resume_capture(&mut self) -> Response {
+        if self.recorder.is_some() {
+            return Response::Ok;
+        }
+        self.capture_requested = true;
+        self.restart_attempts = 0;
+        self.next_restart_at = None;
+        self.start_capture();
+        match self.last_error.clone() {
+            Some(message) => Response::Error { message },
+            None => Response::Ok,
+        }
+    }
+
+    fn reload(&mut self) -> Response {
+        let should_record = self.capture_requested;
+        self.stop_capture();
+        let config = match Config::load(&self.paths) {
+            Ok(config) => config,
+            Err(error) => {
+                self.fail(error.to_string());
+                return Response::Error {
+                    message: error.to_string(),
+                };
+            }
+        };
+        let monitors = match display::monitors() {
+            Ok(monitors) => monitors,
+            Err(error) => {
+                self.fail(error.to_string());
+                return Response::Error {
+                    message: error.to_string(),
+                };
+            }
+        };
+        let selected =
+            display::resolve_monitor(&monitors, config.capture.monitor.as_deref()).cloned();
+        self.monitor = selected.as_ref().map(|monitor| monitor.name.clone());
+        self.replay = selected
+            .as_ref()
+            .map(|monitor| ReplaySpec::from_config(&config, monitor));
+        self.config = config;
+        if should_record {
+            self.restart_attempts = 0;
+            self.next_restart_at = None;
+            self.start_capture();
+        } else {
+            self.state = DaemonState::Paused;
+        }
+        match self.last_error.clone() {
+            Some(message) => Response::Error { message },
+            None => Response::Ok,
+        }
+    }
+
+    fn fail(&mut self, message: String) {
+        eprintln!("rewad: {message}");
+        self.recorder = None;
+        self.capture_started_at = None;
+        self.state = DaemonState::Error;
+        self.last_error = Some(message);
+        if self.capture_requested {
+            let delay = restart_delay(self.restart_attempts);
+            self.restart_attempts = self.restart_attempts.saturating_add(1);
+            self.next_restart_at = Some(Instant::now() + delay);
+            eprintln!("rewad: retrying capture in {}s", delay.as_secs());
+        }
+    }
+
+    fn check_recorder(&mut self) {
+        let error = self
+            .recorder
+            .as_mut()
+            .and_then(|recorder| recorder.is_running().err());
+        if let Some(error) = error {
+            self.fail(error.to_string());
+        }
+    }
+
+    fn maintain_capture(&mut self) {
+        self.check_recorder();
+        self.maintain_shortcut();
+        if self.capture_requested
+            && self.recorder.is_none()
+            && self
+                .next_restart_at
+                .is_none_or(|restart_at| Instant::now() >= restart_at)
+        {
+            self.start_capture();
+        }
+    }
+
+    fn maintain_shortcut(&mut self) {
+        if Instant::now() < self.next_shortcut_check_at {
+            return;
+        }
+        self.next_shortcut_check_at = Instant::now() + SHORTCUT_CHECK_INTERVAL;
+        let executable = control_executable();
+        match shortcuts::ensure(&self.config.hotkey, &executable) {
+            Ok(true) => eprintln!("rewad: restored replay shortcut {}", self.config.hotkey),
+            Ok(false) => {}
+            Err(error) => eprintln!("rewad: shortcut health check failed: {error}"),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn control_executable() -> PathBuf {
+    if let Some(path) = std::env::var_os("REWA_CONTROL") {
+        return PathBuf::from(path);
+    }
+    if let Ok(current) = std::env::current_exe() {
+        let sibling = current.with_file_name("rewactl");
+        if sibling.exists() {
+            return sibling;
+        }
+    }
+    PathBuf::from("/usr/bin/rewactl")
+}
+
+#[cfg(target_os = "linux")]
+fn restart_delay(attempt: u32) -> Duration {
+    Duration::from_secs((1_u64 << attempt.min(5)).min(30))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recorder_restart_delay_is_fast_then_bounded() {
+        assert_eq!(restart_delay(0), Duration::from_secs(1));
+        assert_eq!(restart_delay(1), Duration::from_secs(2));
+        assert_eq!(restart_delay(5), Duration::from_secs(30));
+        assert_eq!(restart_delay(100), Duration::from_secs(30));
+    }
+}

@@ -1,9 +1,9 @@
-pkgname=wreath-git
+pkgname=rewa-git
 pkgver=0.2.3.r0.g0000000
 pkgrel=1
 pkgdesc="Lightweight local-first instant replay recorder for Linux desktops"
 arch=('x86_64')
-url="https://github.com/mika2go/wreath"
+url="https://github.com/mikaeww/rewa"
 license=('MIT')
 depends=(
   'ffmpeg'
@@ -22,9 +22,11 @@ optdepends=(
   'xdg-desktop-portal-hyprland: portal capture fallback on Hyprland'
   'xdg-desktop-portal-kde: portal capture fallback on KDE Plasma'
 )
-provides=('wreath')
-conflicts=('wreath')
-install=wreath.install
+provides=('rewa')
+# Rewa was published as Wreath; the new package takes the old one's place
+conflicts=('rewa' 'wreath' 'wreath-git')
+replaces=('wreath' 'wreath-git')
+install=rewa.install
 source=("$pkgname::git+$url.git")
 b2sums=('SKIP')
 
@@ -52,20 +54,20 @@ check() {
 
 package() {
   cd "$pkgname"
-  install -Dm755 target/release/wreathd "$pkgdir/usr/bin/wreathd"
-  install -Dm755 target/release/wreathctl "$pkgdir/usr/bin/wreathctl"
-  install -Dm755 target/release/wreath-ui "$pkgdir/usr/bin/wreath-ui"
+  install -Dm755 target/release/rewad "$pkgdir/usr/bin/rewad"
+  install -Dm755 target/release/rewactl "$pkgdir/usr/bin/rewactl"
+  install -Dm755 target/release/rewa-ui "$pkgdir/usr/bin/rewa-ui"
 
-  install -Dm644 packaging/wreathd.service \
-    "$pkgdir/usr/lib/systemd/user/wreathd.service"
-  install -Dm644 packaging/io.github.mika2go.Wreath.desktop \
-    "$pkgdir/usr/share/applications/io.github.mika2go.Wreath.desktop"
-  install -Dm644 packaging/io.github.mika2go.Wreath.metainfo.xml \
-    "$pkgdir/usr/share/metainfo/io.github.mika2go.Wreath.metainfo.xml"
-  install -Dm644 packaging/io.github.mika2go.Wreath.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.mika2go.Wreath.svg"
-  install -Dm644 packaging/io.github.mika2go.Wreath-symbolic.svg \
-    "$pkgdir/usr/share/icons/hicolor/symbolic/apps/io.github.mika2go.Wreath-symbolic.svg"
+  install -Dm644 packaging/rewad.service \
+    "$pkgdir/usr/lib/systemd/user/rewad.service"
+  install -Dm644 packaging/io.github.mikaeww.Rewa.desktop \
+    "$pkgdir/usr/share/applications/io.github.mikaeww.Rewa.desktop"
+  install -Dm644 packaging/io.github.mikaeww.Rewa.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/io.github.mikaeww.Rewa.metainfo.xml"
+  install -Dm644 packaging/io.github.mikaeww.Rewa.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.mikaeww.Rewa.svg"
+  install -Dm644 packaging/io.github.mikaeww.Rewa-symbolic.svg \
+    "$pkgdir/usr/share/icons/hicolor/symbolic/apps/io.github.mikaeww.Rewa-symbolic.svg"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 docs/install.md "$pkgdir/usr/share/doc/$pkgname/install.md"

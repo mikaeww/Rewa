@@ -88,7 +88,7 @@
   </settings>
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <ComputerName>WREATH-TEST</ComputerName>
+      <ComputerName>REWA-TEST</ComputerName>
       <RegisteredOwner>Wreath Test</RegisteredOwner>
       <TimeZone>W. Europe Standard Time</TimeZone>
     </component>
@@ -142,8 +142,8 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Description>Install Wreath test environment</Description>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$drive=(Get-Volume -FileSystemLabel 'WREATH_TEST').DriveLetter; &amp; ($drive + ':\Install-Wreath.ps1')"</CommandLine>
+          <Description>Install Rewa test environment</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$drive=(Get-Volume -FileSystemLabel 'REWA_TEST').DriveLetter; &amp; ($drive + ':\Install-Rewa.ps1')"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>

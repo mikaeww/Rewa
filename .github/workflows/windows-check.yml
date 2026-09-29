@@ -33,10 +33,10 @@ jobs:
       - name: Clippy
         run: >
           cargo clippy --locked --target x86_64-pc-windows-msvc --all-targets
-          -p wreath-core -p wreath-windows -p wreath-win-ui -p wreathd -p wreathctl
+          -p rewa-core -p rewa-windows -p rewa-win-ui -p rewad -p rewactl
           -- -D warnings
 
       - name: Test
         run: >
           cargo test --locked --target x86_64-pc-windows-msvc --all-targets
-          -p wreath-core -p wreath-windows -p wreath-win-ui -p wreathd -p wreathctl
+          -p rewa-core -p rewa-windows -p rewa-win-ui -p rewad -p rewactl

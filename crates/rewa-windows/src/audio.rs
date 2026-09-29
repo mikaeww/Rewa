@@ -1,0 +1,1415 @@
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioFormat {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub bits_per_sample: u16,
+    pub block_align: u16,
+    pub floating_point: bool,
+}
+
+impl AudioFormat {
+    pub fn bytes_for_frames(self, frames: u32) -> Option<usize> {
+        usize::try_from(frames)
+            .ok()?
+            .checked_mul(usize::from(self.block_align))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PcmChunk {
+    pub timestamp: std::time::Duration,
+    pub frames: u32,
+    pub discontinuous: bool,
+    pub data: Box<[u8]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pcm16Chunk {
+    pub timestamp: std::time::Duration,
+    pub frames: u32,
+    pub discontinuous: bool,
+    pub data: Box<[u8]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioError(pub String);
+
+impl fmt::Display for AudioError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Windows audio capture failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for AudioError {}
+
+pub fn normalize_to_pcm16(format: AudioFormat, chunk: PcmChunk) -> Result<Pcm16Chunk, AudioError> {
+    let source_sample_bytes = match (format.floating_point, format.bits_per_sample) {
+        (true, 32) => 4,
+        (false, 8) => 1,
+        (false, 16) => 2,
+        (false, 24) => 3,
+        (false, 32) => 4,
+        _ => {
+            return Err(AudioError(format!(
+                "unsupported WASAPI sample format: {}-bit {}",
+                format.bits_per_sample,
+                if format.floating_point {
+                    "float"
+                } else {
+                    "integer"
+                }
+            )));
+        }
+    };
+    if format.channels == 0 || format.sample_rate == 0 {
+        return Err(AudioError("WASAPI returned an empty audio format".into()));
+    }
+    let packed_frame_bytes = usize::from(format.channels)
+        .checked_mul(source_sample_bytes)
+        .ok_or_else(|| AudioError("audio frame layout overflow".into()))?;
+    if usize::from(format.block_align) < packed_frame_bytes {
+        return Err(AudioError(
+            "WASAPI block alignment is smaller than its channel layout".into(),
+        ));
+    }
+    let expected_source_bytes = format
+        .bytes_for_frames(chunk.frames)
+        .ok_or_else(|| AudioError("audio packet size overflow".into()))?;
+    if chunk.data.len() != expected_source_bytes {
+        return Err(AudioError(format!(
+            "WASAPI packet has {} bytes; expected {expected_source_bytes}",
+            chunk.data.len()
+        )));
+    }
+
+    let sample_count = usize::try_from(chunk.frames)
+        .ok()
+        .and_then(|frames| frames.checked_mul(usize::from(format.channels)))
+        .ok_or_else(|| AudioError("audio sample count overflow".into()))?;
+    let output_bytes = sample_count
+        .checked_mul(2)
+        .ok_or_else(|| AudioError("normalized audio packet size overflow".into()))?;
+    let mut output = Vec::with_capacity(output_bytes);
+    for frame in chunk.data.chunks_exact(usize::from(format.block_align)) {
+        for channel in 0..usize::from(format.channels) {
+            let offset = channel * source_sample_bytes;
+            let sample = &frame[offset..offset + source_sample_bytes];
+            let normalized = if format.floating_point {
+                float_to_i16(f32::from_le_bytes(
+                    sample.try_into().expect("four-byte float"),
+                ))
+            } else {
+                integer_to_i16(sample)
+            };
+            output.extend_from_slice(&normalized.to_le_bytes());
+        }
+    }
+    debug_assert_eq!(output.len(), output_bytes);
+    Ok(Pcm16Chunk {
+        timestamp: chunk.timestamp,
+        frames: chunk.frames,
+        discontinuous: chunk.discontinuous,
+        data: output.into_boxed_slice(),
+    })
+}
+
+fn float_to_i16(sample: f32) -> i16 {
+    if !sample.is_finite() {
+        0
+    } else if sample <= -1.0 {
+        i16::MIN
+    } else if sample >= 1.0 {
+        i16::MAX
+    } else {
+        (sample * f32::from(i16::MAX)).round() as i16
+    }
+}
+
+fn integer_to_i16(sample: &[u8]) -> i16 {
+    match sample {
+        [value] => (i16::from(*value) - 128) << 8,
+        [low, high] => i16::from_le_bytes([*low, *high]),
+        [low, middle, high] => {
+            let sign = if high & 0x80 == 0 { 0 } else { 0xff };
+            (i32::from_le_bytes([*low, *middle, *high, sign]) >> 8) as i16
+        }
+        [byte0, byte1, byte2, byte3] => {
+            (i32::from_le_bytes([*byte0, *byte1, *byte2, *byte3]) >> 16) as i16
+        }
+        _ => unreachable!("sample widths are validated before conversion"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub struct LoopbackCapture {
+    stream: CaptureStream,
+}
+
+#[cfg(target_os = "windows")]
+pub struct MicrophoneCapture {
+    stream: CaptureStream,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioEndpointTarget {
+    pub id: String,
+    pub name: String,
+    pub default: bool,
+}
+
+#[cfg(target_os = "windows")]
+pub fn microphones() -> Result<Vec<AudioEndpointTarget>, AudioError> {
+    use windows::Win32::Media::Audio::eCapture;
+
+    endpoints(eCapture, "Windows audio input")
+}
+
+#[cfg(target_os = "windows")]
+pub fn outputs() -> Result<Vec<AudioEndpointTarget>, AudioError> {
+    use windows::Win32::Media::Audio::eRender;
+
+    endpoints(eRender, "Windows audio output")
+}
+
+#[cfg(target_os = "windows")]
+fn endpoints(
+    direction: windows::Win32::Media::Audio::EDataFlow,
+    unnamed: &str,
+) -> Result<Vec<AudioEndpointTarget>, AudioError> {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::Media::Audio::{
+        DEVICE_STATE_ACTIVE, IMMDeviceEnumerator, MMDeviceEnumerator, eConsole,
+    };
+    use windows::Win32::System::Com::{
+        CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    };
+
+    let uninitialize = match unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
+        Ok(()) => true,
+        Err(error) if error.code() == RPC_E_CHANGED_MODE => false,
+        Err(error) => return Err(AudioError(error.to_string())),
+    };
+    let result = (|| -> Result<Vec<AudioEndpointTarget>, AudioError> {
+        let enumerator: IMMDeviceEnumerator =
+            unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+                .map_err(|error| AudioError(error.to_string()))?;
+        let default_id = unsafe { enumerator.GetDefaultAudioEndpoint(direction, eConsole) }
+            .ok()
+            .and_then(|device| device_id(&device).ok());
+        let collection = unsafe { enumerator.EnumAudioEndpoints(direction, DEVICE_STATE_ACTIVE) }
+            .map_err(|error| AudioError(error.to_string()))?;
+        let count =
+            unsafe { collection.GetCount() }.map_err(|error| AudioError(error.to_string()))?;
+        let mut targets = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let device =
+                unsafe { collection.Item(index) }.map_err(|error| AudioError(error.to_string()))?;
+            let id = device_id(&device)?;
+            targets.push(AudioEndpointTarget {
+                default: default_id.as_deref() == Some(id.as_str()),
+                name: device_name(&device).unwrap_or_else(|_| unnamed.to_owned()),
+                id,
+            });
+        }
+        Ok(targets)
+    })();
+    if uninitialize {
+        unsafe { CoUninitialize() };
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn device_name(device: &windows::Win32::Media::Audio::IMMDevice) -> Result<String, AudioError> {
+    use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+    use windows::Win32::System::Com::STGM_READ;
+    use windows::Win32::System::Com::StructuredStorage::PropVariantToString;
+
+    let store = unsafe { device.OpenPropertyStore(STGM_READ) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    let value = unsafe { store.GetValue(&PKEY_Device_FriendlyName) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    let mut buffer = [0_u16; 256];
+    unsafe { PropVariantToString(&value, &mut buffer) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    let length = buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(buffer.len());
+    Ok(String::from_utf16_lossy(&buffer[..length]))
+}
+
+#[cfg(target_os = "windows")]
+fn device_id(device: &windows::Win32::Media::Audio::IMMDevice) -> Result<String, AudioError> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    let pointer = unsafe { device.GetId() }.map_err(|error| AudioError(error.to_string()))?;
+    let id = unsafe { pointer.to_string() }.map_err(|error| AudioError(error.to_string()));
+    unsafe { CoTaskMemFree(Some(pointer.0.cast())) };
+    id
+}
+
+#[cfg(target_os = "windows")]
+const RECORDER_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[cfg(target_os = "windows")]
+const PROBE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_200);
+
+#[cfg(target_os = "windows")]
+struct CaptureStream {
+    format: AudioFormat,
+    receiver: crossbeam_channel::Receiver<PcmChunk>,
+    stop_event: windows::Win32::Foundation::HANDLE,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "windows")]
+impl LoopbackCapture {
+    pub fn spawn(endpoint_id: Option<&str>) -> Result<Self, AudioError> {
+        CaptureStream::spawn(CaptureEndpoint::Loopback {
+            endpoint_id: endpoint_id.map(str::to_owned),
+        })
+        .map(|stream| Self { stream })
+    }
+
+    pub fn format(&self) -> AudioFormat {
+        self.stream.format
+    }
+
+    pub fn receiver(&self) -> &crossbeam_channel::Receiver<PcmChunk> {
+        &self.stream.receiver
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl MicrophoneCapture {
+    pub fn spawn(endpoint_id: Option<&str>) -> Result<Self, AudioError> {
+        CaptureStream::spawn(CaptureEndpoint::Microphone {
+            endpoint_id: endpoint_id.map(str::to_owned),
+        })
+        .map(|stream| Self { stream })
+    }
+
+    /// Shorter startup budget for the interface, which opens the device on its
+    /// message loop and must not stall on a wedged microphone.
+    pub fn spawn_for_probe(endpoint_id: Option<&str>) -> Result<Self, AudioError> {
+        CaptureStream::spawn_with_timeout(
+            CaptureEndpoint::Microphone {
+                endpoint_id: endpoint_id.map(str::to_owned),
+            },
+            PROBE_READY_TIMEOUT,
+        )
+        .map(|stream| Self { stream })
+    }
+
+    pub fn format(&self) -> AudioFormat {
+        self.stream.format
+    }
+
+    pub fn receiver(&self) -> &crossbeam_channel::Receiver<PcmChunk> {
+        &self.stream.receiver
+    }
+}
+
+#[cfg(target_os = "windows")]
+enum CaptureEndpoint {
+    Loopback { endpoint_id: Option<String> },
+    Microphone { endpoint_id: Option<String> },
+}
+
+#[cfg(target_os = "windows")]
+impl CaptureStream {
+    fn spawn(endpoint: CaptureEndpoint) -> Result<Self, AudioError> {
+        Self::spawn_with_timeout(endpoint, RECORDER_READY_TIMEOUT)
+    }
+
+    fn spawn_with_timeout(
+        endpoint: CaptureEndpoint,
+        ready_timeout: std::time::Duration,
+    ) -> Result<Self, AudioError> {
+        use std::sync::mpsc;
+
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::CreateEventW;
+
+        let stop_event = unsafe { CreateEventW(None, false, false, None) }
+            .map_err(|error| AudioError(error.to_string()))?;
+        let stop_for_thread = stop_event.0 as usize;
+        let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(256);
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let thread_name = match endpoint {
+            CaptureEndpoint::Loopback { .. } => "rewa-wasapi-loopback",
+            CaptureEndpoint::Microphone { .. } => "rewa-wasapi-microphone",
+        };
+        let thread = match std::thread::Builder::new()
+            .name(thread_name.into())
+            .spawn(move || {
+                let stop_for_thread =
+                    windows::Win32::Foundation::HANDLE(stop_for_thread as *mut std::ffi::c_void);
+                let result = capture_loop(stop_for_thread, endpoint, chunk_sender, &ready_sender);
+                if let Err(error) = result {
+                    let _ = ready_sender.send(Err(error));
+                }
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = unsafe { CloseHandle(stop_event) };
+                return Err(AudioError(error.to_string()));
+            }
+        };
+        match ready_receiver.recv_timeout(ready_timeout) {
+            Ok(Ok(format)) => Ok(Self {
+                format,
+                receiver: chunk_receiver,
+                stop_event,
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                unsafe { CloseHandle(stop_event) }
+                    .map_err(|close_error| AudioError(close_error.to_string()))?;
+                Err(error)
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // the device is not answering; ask the thread to stop and let a
+                // detached reaper wait for it instead of blocking the caller
+                let _ = unsafe { windows::Win32::System::Threading::SetEvent(stop_event) };
+                let event = stop_event.0 as usize;
+                let reaped = std::thread::Builder::new()
+                    .name("rewa-wasapi-reaper".into())
+                    .spawn(move || {
+                        let _ = thread.join();
+                        let _ = unsafe {
+                            CloseHandle(windows::Win32::Foundation::HANDLE(event as *mut _))
+                        };
+                    });
+                if reaped.is_err() {
+                    rewa_core::diagnostic!(
+                        "Rewa audio: no thread available to close a stalled device"
+                    );
+                }
+                Err(AudioError("the audio device did not start in time".into()))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = thread.join();
+                let _ = unsafe { CloseHandle(stop_event) };
+                Err(AudioError("the audio capture thread stopped".into()))
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for CaptureStream {
+    fn drop(&mut self) {
+        let _ = unsafe { windows::Win32::System::Threading::SetEvent(self.stop_event) };
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.stop_event) };
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_loop(
+    stop_event: windows::Win32::Foundation::HANDLE,
+    endpoint: CaptureEndpoint,
+    sender: crossbeam_channel::Sender<PcmChunk>,
+    ready: &std::sync::mpsc::SyncSender<Result<AudioFormat, AudioError>>,
+) -> Result<(), AudioError> {
+    use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::Media::Audio::{
+        IAudioCaptureClient, IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole,
+    };
+    use windows::Win32::System::Com::{
+        CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+    };
+    use windows::Win32::System::Threading::{
+        AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, WaitForSingleObject,
+    };
+
+    const MICROPHONE_BUFFER_DURATION_HNS: i64 = 2_000_000;
+
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .map_err(|error| AudioError(error.to_string()))?;
+    let mut task_index = 0;
+    let mmcss =
+        unsafe { AvSetMmThreadCharacteristicsW(windows::core::w!("Audio"), &mut task_index).ok() };
+    let result = (|| -> Result<(), AudioError> {
+        let enumerator: IMMDeviceEnumerator =
+            unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+                .map_err(|error| AudioError(error.to_string()))?;
+        let mut device_label = String::from("unknown device");
+        let microphone = matches!(endpoint, CaptureEndpoint::Microphone { .. });
+        let endpoint_name = if microphone { "microphone" } else { "desktop" };
+        let (client, format, device_period_hns, format_mode) = match endpoint {
+            CaptureEndpoint::Loopback { endpoint_id } => {
+                let (name, client, format, period, mode) =
+                    open_loopback_endpoint(&enumerator, endpoint_id.as_deref())?;
+                device_label = name;
+                (client, format, period, mode)
+            }
+            CaptureEndpoint::Microphone {
+                endpoint_id: Some(endpoint_id),
+            } => {
+                let wide_id = endpoint_id
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect::<Vec<_>>();
+                let device = unsafe {
+                    enumerator.GetDevice(windows::core::PCWSTR(wide_id.as_ptr()))
+                }
+                .map_err(|error| {
+                    AudioError(format!(
+                        "configured microphone endpoint `{endpoint_id}` is unavailable: {error}"
+                    ))
+                })?;
+                if let Ok(name) = device_name(&device) {
+                    device_label = name;
+                }
+                let (client, format, period, mode) =
+                    initialize_capture_client(&device, 0, MICROPHONE_BUFFER_DURATION_HNS, true)?;
+                (client, format, period, mode)
+            }
+            CaptureEndpoint::Microphone { endpoint_id: None } => {
+                let device = unsafe { enumerator.GetDefaultAudioEndpoint(eCapture, eConsole) }
+                    .map_err(|error| AudioError(error.to_string()))?;
+                if let Ok(name) = device_name(&device) {
+                    device_label = name;
+                }
+                let (client, format, period, mode) =
+                    initialize_capture_client(&device, 0, MICROPHONE_BUFFER_DURATION_HNS, true)?;
+                (client, format, period, mode)
+            }
+        };
+        let endpoint_buffer_frames = unsafe { client.GetBufferSize() }.unwrap_or_default();
+        rewa_core::diagnostic!(
+            "Rewa {endpoint_name} capture: {device_label}, {format_mode}, {} Hz, {} channel(s), {}-bit, buffer {} frames",
+            format.sample_rate,
+            format.channels,
+            format.bits_per_sample,
+            endpoint_buffer_frames
+        );
+        if microphone {
+            log_audio_effects(&client);
+        }
+        let capture: IAudioCaptureClient =
+            unsafe { client.GetService() }.map_err(|error| AudioError(error.to_string()))?;
+        unsafe { client.Start() }.map_err(|error| AudioError(error.to_string()))?;
+        if ready.send(Ok(format)).is_err() {
+            let _ = unsafe { client.Stop() };
+            return Ok(());
+        }
+
+        let mut clock = CapturePacketClock::default();
+        let mut dropped_packet = false;
+        let mut diagnostics = CaptureDiagnostics::new(endpoint_name, device_label);
+        let poll_interval_ms = capture_poll_interval_ms(device_period_hns);
+        loop {
+            let wait = unsafe { WaitForSingleObject(stop_event, poll_interval_ms) };
+            if wait == WAIT_FAILED {
+                let _ = unsafe { client.Stop() };
+                return Err(AudioError(std::io::Error::last_os_error().to_string()));
+            }
+            if wait == WAIT_OBJECT_0 {
+                break;
+            }
+            if wait == WAIT_TIMEOUT {
+                read_available_packets(
+                    &capture,
+                    format,
+                    &sender,
+                    &mut clock,
+                    &mut dropped_packet,
+                    &mut diagnostics,
+                )?;
+                diagnostics.heartbeat();
+            }
+        }
+        let _ = unsafe { client.Stop() };
+        Ok(())
+    })();
+    if let Some(mmcss) = mmcss {
+        let _ = unsafe { AvRevertMmThreadCharacteristics(mmcss) };
+    }
+    unsafe { CoUninitialize() };
+    result
+}
+
+#[cfg(target_os = "windows")]
+const LOOPBACK_BUFFER_DURATION_HNS: i64 = 2_000_000;
+
+#[cfg(target_os = "windows")]
+type OpenedLoopback = (
+    String,
+    windows::Win32::Media::Audio::IAudioClient,
+    AudioFormat,
+    i64,
+    CaptureFormatMode,
+);
+
+#[cfg(target_os = "windows")]
+fn open_loopback_endpoint(
+    enumerator: &windows::Win32::Media::Audio::IMMDeviceEnumerator,
+    endpoint_id: Option<&str>,
+) -> Result<OpenedLoopback, AudioError> {
+    use windows::Win32::Media::Audio::{AUDCLNT_STREAMFLAGS_LOOPBACK, eConsole, eRender};
+
+    let open =
+        |device: &windows::Win32::Media::Audio::IMMDevice| -> Result<OpenedLoopback, AudioError> {
+            let name = device_name(device).unwrap_or_else(|_| "unknown device".into());
+            let (client, format, period, mode) = initialize_capture_client(
+                device,
+                AUDCLNT_STREAMFLAGS_LOOPBACK,
+                LOOPBACK_BUFFER_DURATION_HNS,
+                false,
+            )?;
+            Ok((name, client, format, period, mode))
+        };
+
+    if let Some(endpoint_id) = endpoint_id {
+        let pinned = (|| -> Result<OpenedLoopback, AudioError> {
+            let wide_id = endpoint_id
+                .encode_utf16()
+                .chain(Some(0))
+                .collect::<Vec<_>>();
+            let device = unsafe { enumerator.GetDevice(windows::core::PCWSTR(wide_id.as_ptr())) }
+                .map_err(|error| AudioError(error.to_string()))?;
+            open(&device)
+        })();
+        match pinned {
+            Ok(opened) => return Ok(opened),
+            Err(error) => rewa_core::diagnostic!(
+                "Rewa desktop audio: the configured output `{endpoint_id}` is unavailable, recording the Windows default instead: {}",
+                error.0
+            ),
+        }
+    }
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    open(&device)
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_capture_client(
+    device: &windows::Win32::Media::Audio::IMMDevice,
+    stream_flags: u32,
+    buffer_duration_hns: i64,
+    microphone: bool,
+) -> Result<
+    (
+        windows::Win32::Media::Audio::IAudioClient,
+        AudioFormat,
+        i64,
+        CaptureFormatMode,
+    ),
+    AudioError,
+> {
+    if !microphone {
+        let (client, native_format, device_period_hns) = prepare_capture_client(device, false)?;
+        return initialize_native_client(
+            client,
+            native_format,
+            device_period_hns,
+            stream_flags,
+            buffer_duration_hns,
+            CaptureFormatMode::NativeLoopback,
+        );
+    }
+
+    let mut last_error = None;
+    for mode in [
+        CaptureFormatMode::RawMono,
+        CaptureFormatMode::RawNative,
+        CaptureFormatMode::ProcessedMono,
+        CaptureFormatMode::ProcessedNative,
+    ] {
+        let prepared = match prepare_capture_client(device, mode.raw()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                rewa_core::diagnostic!("Rewa microphone: {mode} unavailable: {}", error.0);
+                last_error = Some(error);
+                continue;
+            }
+        };
+        let (client, native_format, device_period_hns) = prepared;
+        let attempt = if mode.mono() {
+            initialize_mono_client(
+                client,
+                native_format,
+                device_period_hns,
+                stream_flags,
+                buffer_duration_hns,
+                mode,
+            )
+        } else {
+            initialize_native_client(
+                client,
+                native_format,
+                device_period_hns,
+                stream_flags,
+                buffer_duration_hns,
+                mode,
+            )
+        };
+        match attempt {
+            Ok(ready) => return Ok(ready),
+            Err(error) => {
+                rewa_core::diagnostic!("Rewa microphone: {mode} unavailable: {}", error.0);
+                last_error = Some(error);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        AudioError("the microphone endpoint offers no usable capture format".into())
+    }))
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+enum CaptureFormatMode {
+    RawMono,
+    RawNative,
+    ProcessedMono,
+    ProcessedNative,
+    NativeLoopback,
+}
+
+#[cfg(target_os = "windows")]
+impl CaptureFormatMode {
+    fn raw(self) -> bool {
+        matches!(self, Self::RawMono | Self::RawNative)
+    }
+
+    fn mono(self) -> bool {
+        matches!(self, Self::RawMono | Self::ProcessedMono)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl fmt::Display for CaptureFormatMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::RawMono => "raw PCM16 mono",
+            Self::RawNative => "raw native layout",
+            Self::ProcessedMono => "processed PCM16 mono",
+            Self::ProcessedNative => "processed native layout",
+            Self::NativeLoopback => "native loopback",
+        })
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub fn preferred_microphone_sample_rate(native_sample_rate: u32) -> u32 {
+    if native_sample_rate == 44_100 {
+        44_100
+    } else {
+        48_000
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn prepare_capture_client(
+    device: &windows::Win32::Media::Audio::IMMDevice,
+    raw: bool,
+) -> Result<
+    (
+        windows::Win32::Media::Audio::IAudioClient2,
+        AudioFormat,
+        i64,
+    ),
+    AudioError,
+> {
+    use windows::Win32::Media::Audio::{
+        AUDCLNT_STREAMOPTIONS_RAW, AudioCategory_Other, AudioClientProperties, IAudioClient2,
+    };
+    use windows::Win32::System::Com::{CLSCTX_ALL, CoTaskMemFree};
+
+    let client: IAudioClient2 = unsafe { device.Activate(CLSCTX_ALL, None) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    if raw {
+        let properties = AudioClientProperties {
+            cbSize: std::mem::size_of::<AudioClientProperties>() as u32,
+            bIsOffload: false.into(),
+            eCategory: AudioCategory_Other,
+            Options: AUDCLNT_STREAMOPTIONS_RAW,
+        };
+        unsafe { client.SetClientProperties(&properties) }
+            .map_err(|error| AudioError(format!("raw capture mode was refused: {error}")))?;
+    }
+    let mix_format =
+        unsafe { client.GetMixFormat() }.map_err(|error| AudioError(error.to_string()))?;
+    if mix_format.is_null() {
+        return Err(AudioError("WASAPI returned no mix format".into()));
+    }
+    let format = unsafe { describe_format(mix_format) };
+    unsafe { CoTaskMemFree(Some(mix_format.cast())) };
+    let mut device_period_hns = 0_i64;
+    unsafe { client.GetDevicePeriod(Some(&mut device_period_hns), None) }
+        .map_err(|error| AudioError(error.to_string()))?;
+    Ok((client, format, device_period_hns))
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_mono_client(
+    client: windows::Win32::Media::Audio::IAudioClient2,
+    native_format: AudioFormat,
+    device_period_hns: i64,
+    stream_flags: u32,
+    buffer_duration_hns: i64,
+    mode: CaptureFormatMode,
+) -> Result<
+    (
+        windows::Win32::Media::Audio::IAudioClient,
+        AudioFormat,
+        i64,
+        CaptureFormatMode,
+    ),
+    AudioError,
+> {
+    use windows::Win32::Media::Audio::{
+        AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+        AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, WAVEFORMATEX,
+    };
+
+    let sample_rate = preferred_microphone_sample_rate(native_format.sample_rate);
+    let desired = WAVEFORMATEX {
+        wFormatTag: windows::Win32::Media::Audio::WAVE_FORMAT_PCM as u16,
+        nChannels: 1,
+        nSamplesPerSec: sample_rate,
+        nAvgBytesPerSec: sample_rate.saturating_mul(2),
+        nBlockAlign: 2,
+        wBitsPerSample: 16,
+        cbSize: 0,
+    };
+    unsafe {
+        client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            stream_flags
+                | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            buffer_duration_hns,
+            0,
+            &desired,
+            None,
+        )
+    }
+    .map_err(|error| AudioError(error.to_string()))?;
+    Ok((
+        windows::core::Interface::cast(&client).map_err(|error| AudioError(error.to_string()))?,
+        AudioFormat {
+            sample_rate,
+            channels: 1,
+            bits_per_sample: 16,
+            block_align: 2,
+            floating_point: false,
+        },
+        device_period_hns,
+        mode,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_native_client(
+    client: windows::Win32::Media::Audio::IAudioClient2,
+    format: AudioFormat,
+    device_period_hns: i64,
+    stream_flags: u32,
+    buffer_duration_hns: i64,
+    mode: CaptureFormatMode,
+) -> Result<
+    (
+        windows::Win32::Media::Audio::IAudioClient,
+        AudioFormat,
+        i64,
+        CaptureFormatMode,
+    ),
+    AudioError,
+> {
+    use windows::Win32::Media::Audio::AUDCLNT_SHAREMODE_SHARED;
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    let mix_format =
+        unsafe { client.GetMixFormat() }.map_err(|error| AudioError(error.to_string()))?;
+    if mix_format.is_null() {
+        return Err(AudioError("WASAPI returned no mix format".into()));
+    }
+    let initialized = unsafe {
+        client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            stream_flags,
+            buffer_duration_hns,
+            0,
+            mix_format,
+            None,
+        )
+    };
+    unsafe { CoTaskMemFree(Some(mix_format.cast())) };
+    initialized.map_err(|error| AudioError(error.to_string()))?;
+    Ok((
+        windows::core::Interface::cast(&client).map_err(|error| AudioError(error.to_string()))?,
+        format,
+        device_period_hns,
+        mode,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn capture_poll_interval_ms(device_period_hns: i64) -> u32 {
+    let half_period_ms = device_period_hns.max(0) as u64 / 20_000;
+    u32::try_from(half_period_ms.clamp(2, 10)).unwrap_or(10)
+}
+
+#[cfg(target_os = "windows")]
+fn log_audio_effects(client: &windows::Win32::Media::Audio::IAudioClient) {
+    use windows::Win32::Media::Audio::{
+        AUDIO_EFFECT_STATE_ON, IAudioClient2, IAudioEffectsManager,
+    };
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    let Ok(client) = windows::core::Interface::cast::<IAudioClient2>(client) else {
+        rewa_core::diagnostic!("Rewa microphone: Windows audio-effect enumeration is unavailable");
+        return;
+    };
+    let Ok(manager) = (unsafe { client.GetService::<IAudioEffectsManager>() }) else {
+        rewa_core::diagnostic!("Rewa microphone: Windows audio-effect enumeration is unavailable");
+        return;
+    };
+    let mut effects = std::ptr::null_mut();
+    let mut count = 0_u32;
+    if let Err(error) = unsafe { manager.GetAudioEffects(&mut effects, &mut count) } {
+        rewa_core::diagnostic!("Rewa microphone: cannot enumerate Windows audio effects: {error}");
+        return;
+    }
+    if effects.is_null() || count == 0 {
+        rewa_core::diagnostic!("Rewa microphone: no endpoint audio effects reported");
+        if !effects.is_null() {
+            unsafe { CoTaskMemFree(Some(effects.cast())) };
+        }
+        return;
+    }
+    let effects_slice = unsafe { std::slice::from_raw_parts(effects, count as usize) };
+    let summary = effects_slice
+        .iter()
+        .map(|effect| {
+            format!(
+                "{}:{}",
+                audio_effect_name(effect.id),
+                if effect.state == AUDIO_EFFECT_STATE_ON {
+                    "on"
+                } else {
+                    "off"
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    rewa_core::diagnostic!("Rewa microphone Windows audio effects: {summary}");
+    unsafe { CoTaskMemFree(Some(effects.cast())) };
+}
+
+#[cfg(target_os = "windows")]
+fn audio_effect_name(id: windows::core::GUID) -> String {
+    use windows::Win32::Media::KernelStreaming::{
+        AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION, AUDIO_EFFECT_TYPE_AUTOMATIC_GAIN_CONTROL,
+        AUDIO_EFFECT_TYPE_BEAMFORMING, AUDIO_EFFECT_TYPE_DEEP_NOISE_SUPPRESSION,
+        AUDIO_EFFECT_TYPE_FAR_FIELD_BEAMFORMING, AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION,
+    };
+
+    if id == AUDIO_EFFECT_TYPE_ACOUSTIC_ECHO_CANCELLATION {
+        "echo-cancellation".into()
+    } else if id == AUDIO_EFFECT_TYPE_AUTOMATIC_GAIN_CONTROL {
+        "automatic-gain".into()
+    } else if id == AUDIO_EFFECT_TYPE_BEAMFORMING {
+        "beamforming".into()
+    } else if id == AUDIO_EFFECT_TYPE_FAR_FIELD_BEAMFORMING {
+        "far-field-beamforming".into()
+    } else if id == AUDIO_EFFECT_TYPE_NOISE_SUPPRESSION {
+        "noise-suppression".into()
+    } else if id == AUDIO_EFFECT_TYPE_DEEP_NOISE_SUPPRESSION {
+        "deep-noise-suppression".into()
+    } else {
+        format!("{id:?}")
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct CaptureDiagnostics {
+    endpoint: &'static str,
+    device: String,
+    discontinuities: u64,
+    timestamp_errors: u64,
+    queue_drops: u64,
+    resynchronizations: u64,
+    packets: u64,
+    silent_packets: u64,
+    consecutive_silent: u64,
+    reported_silence: bool,
+    last_sample_clock: std::time::Duration,
+    last_wall_clock: std::time::Duration,
+    last_heartbeat: std::time::Instant,
+}
+
+#[cfg(target_os = "windows")]
+impl CaptureDiagnostics {
+    const HEARTBEAT_PACKETS: u64 = 1_024;
+    const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn new(endpoint: &'static str, device: String) -> Self {
+        Self {
+            endpoint,
+            device,
+            discontinuities: 0,
+            timestamp_errors: 0,
+            queue_drops: 0,
+            resynchronizations: 0,
+            packets: 0,
+            silent_packets: 0,
+            consecutive_silent: 0,
+            reported_silence: false,
+            last_sample_clock: std::time::Duration::ZERO,
+            last_wall_clock: std::time::Duration::ZERO,
+            last_heartbeat: std::time::Instant::now(),
+        }
+    }
+
+    fn discontinuity(&mut self) {
+        Self::record(
+            self.endpoint,
+            "WASAPI discontinuities",
+            &mut self.discontinuities,
+        );
+    }
+
+    fn timestamp_error(&mut self) {
+        Self::record(
+            self.endpoint,
+            "WASAPI timestamp errors",
+            &mut self.timestamp_errors,
+        );
+    }
+
+    fn queue_drop(&mut self) {
+        Self::record(self.endpoint, "queue drops", &mut self.queue_drops);
+    }
+
+    fn resynchronization(&mut self) {
+        Self::record(
+            self.endpoint,
+            "capture clock resynchronizations",
+            &mut self.resynchronizations,
+        );
+    }
+
+    fn packet(
+        &mut self,
+        sample_clock: std::time::Duration,
+        wall_clock: std::time::Duration,
+        silent: bool,
+    ) {
+        self.packets = self.packets.saturating_add(1);
+        self.last_sample_clock = sample_clock;
+        self.last_wall_clock = wall_clock;
+        if silent {
+            self.silent_packets = self.silent_packets.saturating_add(1);
+            self.consecutive_silent = self.consecutive_silent.saturating_add(1);
+        } else {
+            self.consecutive_silent = 0;
+            self.reported_silence = false;
+        }
+        if !self.reported_silence && self.consecutive_silent >= Self::HEARTBEAT_PACKETS {
+            self.reported_silence = true;
+            rewa_core::diagnostic!(
+                "Rewa {} capture: {} has delivered nothing but silence for the last {} packets; check that Windows plays sound through this device",
+                self.endpoint,
+                self.device,
+                self.consecutive_silent
+            );
+        }
+    }
+
+    fn heartbeat(&mut self) {
+        if self.last_heartbeat.elapsed() < Self::HEARTBEAT_INTERVAL {
+            return;
+        }
+        self.last_heartbeat = std::time::Instant::now();
+        let endpoint = self.endpoint;
+        let packets = self.packets;
+        let behind = self
+            .last_wall_clock
+            .saturating_sub(self.last_sample_clock)
+            .as_micros();
+        let ahead = self
+            .last_sample_clock
+            .saturating_sub(self.last_wall_clock)
+            .as_micros();
+        rewa_core::diagnostic!(
+            "Rewa {endpoint} capture health: packets={packets} ({} silent), sample clock {}{} us from the wall clock, discontinuities={}, timestamp errors={}, queue drops={}, resyncs={}",
+            self.silent_packets,
+            if ahead > 0 { "+" } else { "-" },
+            if ahead > 0 { ahead } else { behind },
+            self.discontinuities,
+            self.timestamp_errors,
+            self.queue_drops,
+            self.resynchronizations
+        );
+    }
+
+    fn record(endpoint: &str, label: &str, counter: &mut u64) {
+        *counter = counter.saturating_add(1);
+        if counter.is_power_of_two() {
+            rewa_core::diagnostic!("Rewa {endpoint} capture diagnostics: {label}={counter}");
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct CapturePacketClock {
+    next_timestamp: Option<std::time::Duration>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl CapturePacketClock {
+    const RESYNC_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(50);
+
+    fn timestamp(
+        &mut self,
+        qpc_position: u64,
+        frames: u32,
+        sample_rate: u32,
+        timestamp_error: bool,
+        discontinuous: bool,
+    ) -> (std::time::Duration, std::time::Duration, bool) {
+        let reported = std::time::Duration::from_nanos(qpc_position.saturating_mul(100));
+        let (timestamp, resynchronized) = match self.next_timestamp {
+            Some(expected) if timestamp_error => (expected, false),
+            Some(expected)
+                if !discontinuous && expected.abs_diff(reported) <= Self::RESYNC_THRESHOLD =>
+            {
+                (expected, false)
+            }
+            Some(_) => (reported, true),
+            None => (reported, false),
+        };
+        self.next_timestamp = Some(timestamp.saturating_add(std::time::Duration::from_nanos(
+            u64::from(frames).saturating_mul(1_000_000_000) / u64::from(sample_rate.max(1)),
+        )));
+        (timestamp, reported, resynchronized)
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn describe_format(
+    format: *const windows::Win32::Media::Audio::WAVEFORMATEX,
+) -> AudioFormat {
+    use windows::Win32::Media::KernelStreaming::WAVE_FORMAT_EXTENSIBLE;
+    use windows::Win32::Media::Multimedia::{
+        KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT,
+    };
+
+    let wave = unsafe { format.read_unaligned() };
+    let floating_point = if u32::from(wave.wFormatTag) == WAVE_FORMAT_IEEE_FLOAT {
+        true
+    } else if u32::from(wave.wFormatTag) == WAVE_FORMAT_EXTENSIBLE {
+        let extensible = format.cast::<windows::Win32::Media::Audio::WAVEFORMATEXTENSIBLE>();
+        let subtype = unsafe { std::ptr::addr_of!((*extensible).SubFormat).read_unaligned() };
+        subtype == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+    } else {
+        false
+    };
+    AudioFormat {
+        sample_rate: wave.nSamplesPerSec,
+        channels: wave.nChannels,
+        bits_per_sample: wave.wBitsPerSample,
+        block_align: wave.nBlockAlign,
+        floating_point,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_available_packets(
+    capture: &windows::Win32::Media::Audio::IAudioCaptureClient,
+    format: AudioFormat,
+    sender: &crossbeam_channel::Sender<PcmChunk>,
+    clock: &mut CapturePacketClock,
+    dropped_packet: &mut bool,
+    diagnostics: &mut CaptureDiagnostics,
+) -> Result<(), AudioError> {
+    use windows::Win32::Media::Audio::{
+        AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, AUDCLNT_BUFFERFLAGS_SILENT,
+        AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR,
+    };
+
+    loop {
+        let packet_frames = unsafe { capture.GetNextPacketSize() }
+            .map_err(|error| AudioError(error.to_string()))?;
+        if packet_frames == 0 {
+            return Ok(());
+        }
+        let mut data = std::ptr::null_mut();
+        let mut frames = 0_u32;
+        let mut flags = 0_u32;
+        let mut qpc_position = 0_u64;
+        unsafe {
+            capture.GetBuffer(
+                &mut data,
+                &mut frames,
+                &mut flags,
+                None,
+                Some(&mut qpc_position),
+            )
+        }
+        .map_err(|error| AudioError(error.to_string()))?;
+        let length = format
+            .bytes_for_frames(frames)
+            .ok_or_else(|| AudioError("WASAPI packet size overflow".into()))?;
+        let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
+        let timestamp_error = flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0;
+        let wasapi_discontinuous = flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0;
+        if wasapi_discontinuous {
+            diagnostics.discontinuity();
+        }
+        if timestamp_error {
+            diagnostics.timestamp_error();
+        }
+        let discontinuous = *dropped_packet || wasapi_discontinuous;
+        let bytes = if silent {
+            vec![0; length].into_boxed_slice()
+        } else if data.is_null() {
+            let _ = unsafe { capture.ReleaseBuffer(frames) };
+            return Err(AudioError("WASAPI returned a null audio packet".into()));
+        } else {
+            unsafe { std::slice::from_raw_parts(data, length) }
+                .to_vec()
+                .into_boxed_slice()
+        };
+        unsafe { capture.ReleaseBuffer(frames) }.map_err(|error| AudioError(error.to_string()))?;
+        let (timestamp, wall_clock, resynchronized) = clock.timestamp(
+            qpc_position,
+            frames,
+            format.sample_rate,
+            timestamp_error,
+            discontinuous,
+        );
+        if resynchronized {
+            diagnostics.resynchronization();
+        }
+        diagnostics.packet(timestamp, wall_clock, silent);
+        let chunk = PcmChunk {
+            timestamp,
+            frames,
+            discontinuous,
+            data: bytes,
+        };
+        match sender.try_send(chunk) {
+            Ok(()) => *dropped_packet = false,
+            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                diagnostics.queue_drop();
+                *dropped_packet = true;
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => return Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_byte_math_is_checked() {
+        let format = AudioFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            bits_per_sample: 32,
+            block_align: 8,
+            floating_point: true,
+        };
+
+        assert_eq!(format.bytes_for_frames(480), Some(3_840));
+    }
+
+    #[test]
+    fn microphone_output_uses_the_nearest_aac_compatible_rate() {
+        assert_eq!(preferred_microphone_sample_rate(44_100), 44_100);
+        assert_eq!(preferred_microphone_sample_rate(48_000), 48_000);
+        assert_eq!(preferred_microphone_sample_rate(96_000), 48_000);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn microphone_polling_tracks_half_the_device_period_with_safe_bounds() {
+        assert_eq!(capture_poll_interval_ms(0), 2);
+        assert_eq!(capture_poll_interval_ms(100_000), 5);
+        assert_eq!(capture_poll_interval_ms(1_000_000), 10);
+    }
+
+    #[test]
+    fn uncertain_wasapi_timestamps_continue_from_the_previous_packet() {
+        let mut clock = CapturePacketClock::default();
+        let (first, _, _) = clock.timestamp(10_000, 480, 48_000, false, false);
+        let (uncertain, _, _) = clock.timestamp(1, 480, 48_000, true, false);
+
+        assert_eq!(first, std::time::Duration::from_millis(1));
+        assert_eq!(uncertain, std::time::Duration::from_millis(11));
+    }
+
+    #[test]
+    fn wall_clock_jitter_never_reaches_the_capture_timeline() {
+        let mut clock = CapturePacketClock::default();
+        let start = 10_000_u64;
+        let mut stamps = Vec::new();
+        for packet in 0..10_u64 {
+            let jitter = [0_i64, 30_000, -20_000, 12_000, -28_000][packet as usize % 5];
+            let reported = (start as i64 + (packet as i64 * 100_000) + jitter) as u64;
+            stamps.push(clock.timestamp(reported, 480, 48_000, false, false).0);
+        }
+
+        for (packet, stamp) in stamps.iter().enumerate() {
+            let expected = std::time::Duration::from_millis(1)
+                + std::time::Duration::from_millis(10 * packet as u64);
+            assert_eq!(
+                *stamp, expected,
+                "packet {packet} drifted with the wall clock"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reported_gap_resynchronizes_to_the_wall_clock() {
+        let mut clock = CapturePacketClock::default();
+        let _ = clock.timestamp(10_000, 480, 48_000, false, false);
+        let (resumed, _, resynchronized) = clock.timestamp(5_010_000, 480, 48_000, false, true);
+
+        assert_eq!(resumed, std::time::Duration::from_millis(501));
+        assert!(resynchronized);
+    }
+
+    #[test]
+    fn a_silent_drift_beyond_the_threshold_also_resynchronizes() {
+        let mut clock = CapturePacketClock::default();
+        let _ = clock.timestamp(10_000, 480, 48_000, false, false);
+        let (resumed, _, resynchronized) = clock.timestamp(2_110_000, 480, 48_000, false, false);
+
+        assert_eq!(resumed, std::time::Duration::from_millis(211));
+        assert!(resynchronized);
+    }
+
+    #[test]
+    fn normalizes_float_stereo_to_packed_pcm16() {
+        let format = AudioFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            bits_per_sample: 32,
+            block_align: 8,
+            floating_point: true,
+        };
+        let data = [-1.0_f32, -0.5, 0.5, 1.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        let normalized = normalize_to_pcm16(
+            format,
+            PcmChunk {
+                timestamp: std::time::Duration::from_secs(2),
+                frames: 2,
+                discontinuous: true,
+                data,
+            },
+        )
+        .unwrap();
+
+        let samples = normalized
+            .data
+            .chunks_exact(2)
+            .map(|sample| i16::from_le_bytes(sample.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(samples, [i16::MIN, -16_384, 16_384, i16::MAX]);
+        assert_eq!(normalized.timestamp, std::time::Duration::from_secs(2));
+        assert_eq!(normalized.frames, 2);
+        assert!(normalized.discontinuous);
+    }
+
+    #[test]
+    fn normalizes_integer_widths_without_unbounded_buffers() {
+        let formats_and_data = [
+            (8, vec![0x00, 0x80, 0xff], vec![i16::MIN, 0, 32_512]),
+            (
+                24,
+                vec![0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0xff, 0xff, 0x7f],
+                vec![i16::MIN, 0, i16::MAX],
+            ),
+            (
+                32,
+                vec![0x00, 0x00, 0x00, 0x80, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0x7f],
+                vec![i16::MIN, 0, i16::MAX],
+            ),
+        ];
+
+        for (bits, data, expected) in formats_and_data {
+            let format = AudioFormat {
+                sample_rate: 48_000,
+                channels: 1,
+                bits_per_sample: bits,
+                block_align: bits / 8,
+                floating_point: false,
+            };
+            let normalized = normalize_to_pcm16(
+                format,
+                PcmChunk {
+                    timestamp: std::time::Duration::ZERO,
+                    frames: 3,
+                    discontinuous: false,
+                    data: data.into_boxed_slice(),
+                },
+            )
+            .unwrap();
+            let samples = normalized
+                .data
+                .chunks_exact(2)
+                .map(|sample| i16::from_le_bytes(sample.try_into().unwrap()))
+                .collect::<Vec<_>>();
+            assert_eq!(samples, expected);
+            assert_eq!(normalized.data.len(), 6);
+        }
+    }
+
+    #[test]
+    fn rejects_truncated_and_unknown_audio_packets() {
+        let base = AudioFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            bits_per_sample: 16,
+            block_align: 4,
+            floating_point: false,
+        };
+        let chunk = PcmChunk {
+            timestamp: std::time::Duration::ZERO,
+            frames: 2,
+            discontinuous: false,
+            data: vec![0; 7].into_boxed_slice(),
+        };
+        assert!(normalize_to_pcm16(base, chunk).is_err());
+
+        let unsupported = AudioFormat {
+            bits_per_sample: 64,
+            floating_point: true,
+            block_align: 16,
+            ..base
+        };
+        let chunk = PcmChunk {
+            timestamp: std::time::Duration::ZERO,
+            frames: 1,
+            discontinuous: false,
+            data: vec![0; 16].into_boxed_slice(),
+        };
+        assert!(normalize_to_pcm16(unsupported, chunk).is_err());
+    }
+}

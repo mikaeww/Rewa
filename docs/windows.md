@@ -12,13 +12,13 @@ the buffered video payload or introducing a save-time hole in the next replay.
 
 ## Runtime layout
 
-- `wreathd.exe` owns capture, encoding, the replay ring, the global hotkey, and
+- `rewad.exe` owns capture, encoding, the replay ring, the global hotkey, and
   the local named pipe.
-- `wreath-tray.exe` is the native notification-area process. It starts the
+- `rewa-tray.exe` is the native notification-area process. It starts the
   daemon when necessary and then remains in a message loop.
-- `wreath-win-ui.exe` is the visible native Windows application. Closing it
+- `rewa-win-ui.exe` is the visible native Windows application. Closing it
   leaves the tray and recorder running.
-- `wreathctl.exe` is the optional command-line control client.
+- `rewactl.exe` is the optional command-line control client.
 
 Only one daemon runs per session; a second one exits at once instead of
 competing for the pipe, the shortcut, and the capture device. Every wait on the
@@ -48,7 +48,7 @@ no-op either: it registers the combination again, so answering a dead shortcut
 the obvious way works instead of being acknowledged and ignored. What no
 registration can repair is elevation: Windows withholds the shortcut from an
 unelevated recorder while an elevated window is in the foreground, and a game
-that ships an anti-cheat is exactly that window. Wreath therefore requests
+that ships an anti-cheat is exactly that window. Rewa therefore requests
 administrator rights in the manifest of all three executables, so the recorder,
 the tray and the application always run elevated and the shortcut arrives over a
 fullscreen game instead of being swallowed by it. The log still records at
@@ -61,7 +61,7 @@ a known executable, an Unreal shipping build, an install root under Steam, Epic,
 Riot, Roblox, Xbox or Battle.net, a game runtime such as UnityPlayer or an
 anti-cheat module, or Windows' own GameConfigStore make a game certain, while
 Direct3D plus a controller runtime plus a borderless window that fills the
-monitor only make one likely. The shell, the browsers, the launchers and Wreath
+monitor only make one likely. The shell, the browsers, the launchers and Rewa
 itself are denied before any of that is weighed, and module evidence is read
 where a process allows it and simply missing where an anti-cheat does not, so no
 rule leans on it alone.
@@ -78,7 +78,7 @@ ends the recording nor empties the ring, a game started from a launcher that
 stays open takes over from it, and a game that quits hands capture back to the
 screen within the second. Set `follow_game = false` under `[capture]` in `config.toml` to pin capture to the
 configured monitor, and list executables or full paths under `games` to teach
-Wreath something it does not recognize.
+Rewa something it does not recognize.
 
 Capture itself is watched the same way, because Windows Graphics Capture also
 stops without saying so. A display that went to sleep, a session switch, a
@@ -115,8 +115,8 @@ The tray opens or focuses the full application and its menu saves a replay,
 pauses or resumes capture, opens clips or the configuration file, and enables
 per-user startup. Because Windows starts no elevated executable from
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, enabling startup
-registers a logon task named `Wreath elevated autostart` that runs
-`wreath-tray.exe` for the current user with the highest rights; it requires no
+registers a logon task named `Rewa elevated autostart` that runs
+`rewa-tray.exe` for the current user with the highest rights; it requires no
 service, and no prompt appears because the tray asking for it is elevated
 already. A `Run` entry the installer wrote, or one left behind by an older
 version, is converted into that task the first time the tray comes up, and an
@@ -126,7 +126,7 @@ logon that beats Explorer to the notification area and an Explorer restart
 afterwards: it keeps trying to place its icon instead of giving up, and starts
 the recorder later if it could not reach it at logon.
 
-The native application uses the same Wreath mark for its window, executable,
+The native application uses the same Rewa mark for its window, executable,
 installer, and notification-area icon. Its sidebar expands only when there is
 room for labels and otherwise remains icon-only. Settings with multiple choices
 open native Windows menus. Frame-rate choices follow the selected monitor's
@@ -168,7 +168,7 @@ streams Windows considers active — and never at all before Windows 10 — so t
 capture thread waited forever and the clip got no audio track, with no failure
 reported anywhere.
 
-Wreath briefly offered to filter one application
+Rewa briefly offered to filter one application
 out of that mix through Windows' process-loopback device; it is gone. The
 filtered stream depends on a process tree that changes under the recorder, and
 where Windows accepted it at all the desktop side could end up silent, so the
@@ -181,19 +181,19 @@ atomically, and reloaded by a running recorder. If the live pipeline rejects a
 change, the previous configuration is restored:
 
 ```powershell
-wreathctl monitors
-wreathctl microphones
-wreathctl outputs
-wreathctl codecs
-wreathctl config monitor \\.\DISPLAY1
-wreathctl config microphone default
-wreathctl config microphone off
-wreathctl config desktop-device {0.0.0.00000000}.{...}
-wreathctl config desktop-device default
-wreathctl config duration 30
-wreathctl config fps 60
-wreathctl config codec h264
-wreathctl config quality 60
+rewactl monitors
+rewactl microphones
+rewactl outputs
+rewactl codecs
+rewactl config monitor \\.\DISPLAY1
+rewactl config microphone default
+rewactl config microphone off
+rewactl config desktop-device {0.0.0.00000000}.{...}
+rewactl config desktop-device default
+rewactl config duration 30
+rewactl config fps 60
+rewactl config codec h264
+rewactl config quality 60
 ```
 
 ## Memory
@@ -211,9 +211,9 @@ how many that is.
 
 What that means in practice:
 
-- `wreathctl config memory 96` pins the footprint. Lower it until the number in
+- `rewactl config memory 96` pins the footprint. Lower it until the number in
   the log is what you want and read what it costs in seconds.
-- `wreathctl config codec hevc` buys about a third more seconds inside the same
+- `rewactl config codec hevc` buys about a third more seconds inside the same
   ceiling, because it is the same bytes that go into the file.
 - A shorter `duration` scales the requirement directly.
 - The recorder reports its own footprint and how much of it is encoded replay
@@ -230,12 +230,12 @@ clip is roughly 56 MB at 1080p60, 100 MB at 1440p60 and 224 MB at 2160p60.
 
 Three levers, in the order worth reaching for:
 
-- `wreathctl config codec hevc` — same picture in about a third fewer bits.
+- `rewactl config codec hevc` — same picture in about a third fewer bits.
   Plays everywhere Windows does, but some browsers and chat clients will not
   preview it inline, so keep `h264` for clips you paste into a conversation.
-- `wreathctl config quality 50` — scales the target down by a third. Below
+- `rewactl config quality 50` — scales the target down by a third. Below
   about 40 fast motion starts to smear.
-- `wreathctl config fps 30` or a shorter `duration` — both scale the size
+- `rewactl config fps 30` or a shorter `duration` — both scale the size
   directly.
 
 A saved clip is never shorter than its configured duration while the memory
@@ -250,8 +250,8 @@ menu cost a fraction of a fast pan, but configuring it through `ICodecAPI`
 after the output type is set left hardware encoders producing distorted
 frames, so it is not currently requested.
 
-Use the endpoint ID printed by `wreathctl microphones` instead of `default` to
-pin capture to a specific microphone. Wreath opens the endpoint in WASAPI raw
+Use the endpoint ID printed by `rewactl microphones` instead of `default` to
+pin capture to a specific microphone. Rewa opens the endpoint in WASAPI raw
 mode, which bypasses every signal-processing stage except the always-on
 hardware and driver ones, so neither the Windows communications chain nor an
 OEM chain from Realtek, Nahimic or Waves — gain control, noise suppression,
@@ -261,7 +261,7 @@ the processed and native layouts on drivers that refuse either. The log records
 which of those it got. If you play desktop audio over speakers, expect some of
 it to reach the microphone; there is no echo cancellation in this path.
 
-Wreath appends capture diagnostics to `%LOCALAPPDATA%\Wreath\wreath.log`: the
+Rewa appends capture diagnostics to `%LOCALAPPDATA%\Rewa\rewa.log`: the
 name and format of the endpoint each stream negotiated — compare the desktop one
 against the device Windows is actually playing through when a clip comes out
 silent — which Windows audio effects the driver still applies, the encoder's
@@ -275,9 +275,9 @@ the GUI subsystem and have no console, so this file is the only place those
 numbers appear. Attach it when reporting an audio problem. It is restarted once
 it passes 1 MB.
 
-`wreathctl config` prints the complete
-current configuration. `wreathctl codecs` lists only hardware video encoders
-reported by Media Foundation; `wreathctl status` reports which one the live
+`rewactl config` prints the complete
+current configuration. `rewactl codecs` lists only hardware video encoders
+reported by Media Foundation; `rewactl status` reports which one the live
 pipeline selected, the exact D3D11 adapter name and PCI vendor/device IDs used
 by capture, its current encoded replay size, and the buffered duration.
 `Reload settings` also rebuilds a pipeline in the error state, so a corrected
@@ -315,8 +315,8 @@ From the repository root:
 The script runs the locked Windows-target test suite and Clippy with warnings as
 errors, builds only the four Windows executables in release mode, enforces small
 binary-size budgets, and writes
-`dist/windows/Wreath-0.2.3-x64-setup.exe`. A matching
-`Wreath-0.2.3-x64-build.json` records the SHA-256 hash and size of every binary
+`dist/windows/Rewa-0.2.3-x64-setup.exe`. A matching
+`Rewa-0.2.3-x64-build.json` records the SHA-256 hash and size of every binary
 and the setup executable, the exact Git commit, Windows build, architecture, and
 Rust/Cargo/NSIS versions. The script refuses non-Windows hosts and modified
 tracked source, so the evidence always identifies the native, reproducible
@@ -326,22 +326,22 @@ tray starts, verifies embedded application icons and a native window resize,
 reinstalls while both processes are running, verifies the upgraded app starts
 again, and verifies that uninstalling a running installation stops the app,
 tray, and recorder before removing their executables. The NSIS setup installs
-per user below `%LOCALAPPDATA%\Wreath`
-and adds Start-menu shortcuts for Wreath and its uninstaller. The setup itself
+per user below `%LOCALAPPDATA%\Rewa`
+and adds Start-menu shortcuts for Rewa and its uninstaller. The setup itself
 does not ask for administrator rights; the application does, once per start,
 because the replay shortcut is dead over an anti-cheat game without them. The
 finish page opens the full application, which starts the independent tray and
 recorder. Upgrades stop the old tray-only process
 before replacing files and preserve an existing autostart opt-in by migrating it
-to `wreath-tray.exe`. Autostart remains opt-in from the tray menu on clean
+to `rewa-tray.exe`. Autostart remains opt-in from the tray menu on clean
 installations.
 
 ## Local data
 
-- configuration: `%LOCALAPPDATA%\Wreath\config.toml`;
-- cache: `%LOCALAPPDATA%\Wreath\Cache`;
-- clips: `%USERPROFILE%\Videos\Wreath` by default;
-- control endpoint: `\\.\pipe\wreath`.
+- configuration: `%LOCALAPPDATA%\Rewa\config.toml`;
+- cache: `%LOCALAPPDATA%\Rewa\Cache`;
+- clips: `%USERPROFILE%\Videos\Rewa` by default;
+- control endpoint: `\\.\pipe\rewa`.
 
 Uninstalling through the NSIS uninstaller removes installed binaries, shortcuts,
 the uninstall registration, and the optional

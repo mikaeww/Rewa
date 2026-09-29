@@ -11,7 +11,7 @@ if [[ "${1:-}" != "--no-build" ]]; then
         cd "$PROJECT_ROOT"
         RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C link-arg=/ignore:4099" \
             windows_cargo xwin build --locked --target x86_64-pc-windows-msvc --release \
-            -p wreathd -p wreathctl -p wreath-win-ui
+            -p rewad -p rewactl -p rewa-win-ui
     )
 fi
 
@@ -21,27 +21,27 @@ fi
 
 SAMPLES="$PAYLOAD_DIR/Samples"
 mkdir -p "$SAMPLES"
-if [[ ! -f "$SAMPLES/Wreath-Neon-Grid.mp4" ]]; then
+if [[ ! -f "$SAMPLES/Rewa-Neon-Grid.mp4" ]]; then
     ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=1280x720:rate=30" \
         -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 6 -c:v libx264 -preset veryfast \
-        -pix_fmt yuv420p -c:a aac -b:a 128k "$SAMPLES/Wreath-Neon-Grid.mp4"
+        -pix_fmt yuv420p -c:a aac -b:a 128k "$SAMPLES/Rewa-Neon-Grid.mp4"
     ffmpeg -hide_banner -loglevel error -y -f lavfi -i "smptebars=size=1920x1080:rate=30" \
         -f lavfi -i "sine=frequency=660:sample_rate=48000" -t 5 -c:v libx264 -preset veryfast \
-        -pix_fmt yuv420p -c:a aac -b:a 128k "$SAMPLES/Wreath-Color-Bars.mp4"
+        -pix_fmt yuv420p -c:a aac -b:a 128k "$SAMPLES/Rewa-Color-Bars.mp4"
     ffmpeg -hide_banner -loglevel error -y -f lavfi -i "color=c=0x090a0c:size=2560x1440:rate=60" \
         -vf "drawbox=x=160:y=160:w=2240:h=1120:color=0x3b82f6@0.8:t=12,drawgrid=w=160:h=160:t=2:c=0x292c31" \
-        -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p "$SAMPLES/Wreath-1440p-Layout.mp4"
+        -t 4 -c:v libx264 -preset veryfast -pix_fmt yuv420p "$SAMPLES/Rewa-1440p-Layout.mp4"
 fi
 
 STAGE="$(mktemp -d "$STATE_DIR/payload.XXXXXX")"
 trap 'rm -rf -- "$STAGE"' EXIT
 install -m 0644 "$SCRIPT_DIR/guest/Autounattend.xml" "$STAGE/Autounattend.xml"
-install -m 0644 "$SCRIPT_DIR/guest/Install-Wreath.ps1" "$STAGE/Install-Wreath.ps1"
+install -m 0644 "$SCRIPT_DIR/guest/Install-Rewa.ps1" "$STAGE/Install-Rewa.ps1"
 install -m 0644 "$VIRTIO_TOOLS" "$STAGE/virtio-win-guest-tools.exe"
 cp -a "$SAMPLES" "$STAGE/Samples"
 
 BIN_DIR="$PROJECT_ROOT/target/x86_64-pc-windows-msvc/release"
-for binary in wreathd.exe wreathctl.exe wreath-tray.exe wreath-win-ui.exe; do
+for binary in rewad.exe rewactl.exe rewa-tray.exe rewa-win-ui.exe; do
     install -m 0644 "$BIN_DIR/$binary" "$STAGE/$binary"
 done
 
@@ -61,13 +61,13 @@ fi
 if [[ -z "$CURRENT" && -f "$STATE_DIR/current-payload" ]]; then
     CURRENT="$(<"$STATE_DIR/current-payload")"
 fi
-if [[ "$CURRENT" == "$PAYLOAD_DIR/wreath-test-a.iso" ]]; then
-    NEXT="$PAYLOAD_DIR/wreath-test-b.iso"
+if [[ "$CURRENT" == "$PAYLOAD_DIR/rewa-test-a$VM_SUFFIX.iso" ]]; then
+    NEXT="$PAYLOAD_DIR/rewa-test-b$VM_SUFFIX.iso"
 else
-    NEXT="$PAYLOAD_DIR/wreath-test-a.iso"
+    NEXT="$PAYLOAD_DIR/rewa-test-a$VM_SUFFIX.iso"
 fi
 rm -f -- "$NEXT"
-flatpak run --command=genisoimage org.gnome.Boxes -quiet -J -R -V WREATH_TEST -o "$NEXT" "$STAGE"
+flatpak run --command=genisoimage org.gnome.Boxes -quiet -J -R -V REWA_TEST -o "$NEXT" "$STAGE"
 printf '%s\n' "$NEXT" > "$STATE_DIR/current-payload"
 
 if domain_exists; then
@@ -78,4 +78,4 @@ if domain_exists; then
     fi
 fi
 
-printf 'Wreath payload ready: %s\n' "$NEXT"
+printf 'Rewa payload ready: %s\n' "$NEXT"

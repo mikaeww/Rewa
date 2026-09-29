@@ -63,17 +63,20 @@ if ! domain_exists || [[ "$FRESH_INSTALL" == true ]]; then
     fi
     python - "$SCRIPT_DIR/domain.xml.in" "$STATE_DIR/domain.xml" \
         "$VM_DISK" "$WINDOWS_BOOT_ISO" "$PAYLOAD_ISO" \
-        "$STATE_DIR/wreath-win11_VARS.fd" <<'PY'
+        "$STATE_DIR/wreath-win11_VARS.fd" "$DOMAIN_NAME" "$DOMAIN_UUID" "$DOMAIN_MAC" <<'PY'
 import sys
 from pathlib import Path
 
-template, output, disk, windows_iso, payload_iso, nvram = sys.argv[1:]
+template, output, disk, windows_iso, payload_iso, nvram, name, uuid, mac = sys.argv[1:]
 text = Path(template).read_text(encoding="utf-8")
 for key, value in {
     "@DISK@": disk,
     "@WINDOWS_ISO@": windows_iso,
     "@PAYLOAD_ISO@": payload_iso,
     "@NVRAM@": nvram,
+    "@NAME@": name,
+    "@UUID@": uuid,
+    "@MAC@": mac,
 }.items():
     text = text.replace(key, value)
 Path(output).write_text(text, encoding="utf-8")
