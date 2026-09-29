@@ -6,7 +6,7 @@ on:
       version:
         description: Semantic version without the v prefix
         required: true
-        default: 2.0.0
+        default: 2.1.0
         type: string
 
 permissions:
@@ -68,4 +68,4 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Rewa $env:RELEASE_VERSION" `
-            --notes "Wreath is now Rewa, with a new icon and a rebuilt Windows interface: a quiet frame and stage card, replay state and Save clip at the foot of a sidebar that folds smoothly, recording options in a popover instead of toolbars, clean clip cards, redesigned settings, collections, preview and editor, and spring animations throughout. Installing Rewa over Wreath keeps your settings, favourites, clips and autostart and removes the old Wreath program."
+            --notes "Works through the first round of feedback. New clips are named Clip 1, Clip 2 and so on, and remember the game they were recorded in; the Collections page lists those games next to your folders. A compact view shows more clips at once and is remembered, clips drag straight into Explorer, Discord or a browser, and the clip menu can show a clip in Explorer or open it in your media player. Capture falls back to the primary display when the saved one is gone, and the shortcut setting explains why a key is refused. The player, editor, delete dialog, menus and sliders are reworked, with new clip arrows beside the video, a Photos-style trim strip and a new app icon."
