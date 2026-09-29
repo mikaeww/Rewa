@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "rewa-core"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "rewa-ui"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "gdk-pixbuf",
  "gtk4",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "rewa-win-ui"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "rewa-core",
  "rewa-windows",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "rewa-windows"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "crossbeam-channel",
  "rewa-core",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "rewactl"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "rewa-core",
  "rewa-windows",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "rewad"
-version = "1.5.2"
+version = "2.0.0"
 dependencies = [
  "rewa-core",
  "rewa-windows",
