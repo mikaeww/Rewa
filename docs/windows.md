@@ -72,10 +72,11 @@ whose window fills its monitor is recorded as that monitor instead, because the
 picture is the same one and a monitor keeps delivering where a window item does
 not. Everything else — a likely game, a tiny window, no game at all — is the
 configured or primary monitor, so there is always something to save. The watch
-holds on to the game it found until the window or the process is gone, so
-alt-tabbing to a browser neither ends the recording nor empties the ring, and a
-game that quits hands capture back to the screen within the second. Set
-`follow_game = false` under `[capture]` in `config.toml` to pin capture to the
+holds on to the game it found until the window or the process is gone, or until
+another certain game comes to the front, so alt-tabbing to a browser neither
+ends the recording nor empties the ring, a game started from a launcher that
+stays open takes over from it, and a game that quits hands capture back to the
+screen within the second. Set `follow_game = false` under `[capture]` in `config.toml` to pin capture to the
 configured monitor, and list executables or full paths under `games` to teach
 Wreath something it does not recognize.
 

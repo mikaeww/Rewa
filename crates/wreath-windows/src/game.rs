@@ -39,6 +39,9 @@ const DENIED_EXECUTABLES: &[&str] = &[
     "firefox.exe",
     "gog galaxy.exe",
     "idea64.exe",
+    "leagueclient.exe",
+    "leagueclientux.exe",
+    "leagueclientuxrender.exe",
     "logioverlay.exe",
     "lockapp.exe",
     "mpv.exe",
@@ -80,7 +83,6 @@ const GAME_EXECUTABLES: &[&str] = &[
     "gtav.exe",
     "javaw.exe",
     "league of legends.exe",
-    "leagueclient.exe",
     "minecraft.exe",
     "minecraftlauncher.exe",
     "osu!.exe",
@@ -310,30 +312,24 @@ impl GameWatch {
     }
 
     pub fn look(&mut self) -> Option<GameWindow> {
-        if let Some(game) = self.tracked_game() {
-            if let Some(tracked) = self.tracked.as_mut()
-                && game.visible
-            {
-                tracked.facts = game.facts;
-                tracked.title = game.title.clone();
-                tracked.monitor = game.monitor;
-            }
-            return Some(game);
-        }
-        self.tracked = None;
-        self.uncapturable = None;
         let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-        let now = std::time::Instant::now();
-        if self.rejected.is_some_and(|(window, seen)| {
-            window == foreground && now < seen + REINSPECTION_INTERVAL
-        }) {
-            return None;
-        }
-        let Some(game) = self.inspect(foreground) else {
-            self.rejected = Some((foreground, now));
-            return None;
+        let tracked = self.tracked_game();
+        // A different certain game in front wins, so a launcher left open (the League client) cannot shadow the game it started.
+        let replaceable = tracked.as_ref().is_none_or(|game| {
+            game.window != foreground && window_process_id(foreground) != Some(game.process_id)
+        });
+        let found = replaceable
+            .then(|| self.inspect_foreground(foreground))
+            .flatten()
+            .filter(|game| tracked.is_none() || game.confidence == GameConfidence::Certain);
+        let Some(game) = found else {
+            if tracked.is_none() {
+                self.tracked = None;
+                self.uncapturable = None;
+            }
+            return tracked.map(|game| self.refresh(game));
         };
-        self.rejected = None;
+        self.uncapturable = None;
         self.tracked = Some(TrackedGame {
             window: game.window,
             process_id: game.process_id,
@@ -349,6 +345,35 @@ impl GameWatch {
             game.facts.width,
             game.facts.height
         );
+        Some(game)
+    }
+
+    fn refresh(&mut self, game: GameWindow) -> GameWindow {
+        if let Some(tracked) = self.tracked.as_mut()
+            && game.visible
+        {
+            tracked.facts = game.facts;
+            tracked.title = game.title.clone();
+            tracked.monitor = game.monitor;
+        }
+        game
+    }
+
+    fn inspect_foreground(
+        &mut self,
+        foreground: windows::Win32::Foundation::HWND,
+    ) -> Option<GameWindow> {
+        let now = std::time::Instant::now();
+        if self.rejected.is_some_and(|(window, seen)| {
+            window == foreground && now < seen + REINSPECTION_INTERVAL
+        }) {
+            return None;
+        }
+        let Some(game) = self.inspect(foreground) else {
+            self.rejected = Some((foreground, now));
+            return None;
+        };
+        self.rejected = None;
         Some(game)
     }
 
@@ -767,6 +792,29 @@ mod tests {
         assert_eq!(
             classify(&chrome, &fullscreen(), &[], &[]),
             GameConfidence::None
+        );
+    }
+
+    #[test]
+    fn the_league_client_is_a_launcher_and_the_match_is_the_game() {
+        let root = "C:\\Riot Games\\League of Legends\\";
+        let client = process(
+            "LeagueClientUx.exe",
+            &format!("{root}LeagueClientUx.exe"),
+            &[],
+        );
+        let game = process(
+            "League of Legends.exe",
+            &format!("{root}Game\\League of Legends.exe"),
+            &[],
+        );
+        assert_eq!(
+            classify(&client, &windowed(), &[], &[]),
+            GameConfidence::None
+        );
+        assert_eq!(
+            classify(&game, &fullscreen(), &[], &[]),
+            GameConfidence::Certain
         );
     }
 
