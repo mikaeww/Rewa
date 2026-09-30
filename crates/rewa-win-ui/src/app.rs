@@ -35,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
     DestroyWindow, DispatchMessageW, FindWindowW, GWL_STYLE, GWLP_USERDATA, GetClientRect,
     GetCursorPos, GetMessageW, GetParent, GetWindowLongPtrW, GetWindowPlacement, HTCLIENT,
-    HWND_TOP, IDC_ARROW, IDC_SIZEWE, IsIconic, IsZoomed, LoadCursorW, MINMAXINFO, MSG,
+    HWND_TOP, IDC_ARROW, IDC_HAND, IDC_SIZEWE, IsIconic, IsZoomed, LoadCursorW, MINMAXINFO, MSG,
     PostQuitMessage, RegisterClassW, SIZE_MINIMIZED, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
     SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW,
     SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
@@ -406,17 +406,25 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_NCHITTEST => unsafe { DefWindowProcW(window, message, wparam, lparam) },
-        WM_SETCURSOR
-            if low_word(lparam.0) as u32 == HTCLIENT
-                && state_mut(window).is_some_and(|state| {
-                    matches!(state.slider_drag, Some(SliderDrag::FolderColumn))
-                        || state.renderer.hovered() == Some(&Action::DragFolderDivider)
-                }) =>
-        {
-            if let Ok(cursor) = unsafe { LoadCursorW(None, IDC_SIZEWE) } {
-                unsafe { SetCursor(Some(cursor)) };
+        WM_SETCURSOR if low_word(lparam.0) as u32 == HTCLIENT => {
+            let shape = state_mut(window).and_then(|state| {
+                if matches!(state.slider_drag, Some(SliderDrag::FolderColumn))
+                    || state.renderer.hovered() == Some(&Action::DragFolderDivider)
+                {
+                    Some(IDC_SIZEWE)
+                } else if state.renderer.hovered() == Some(&Action::Home) {
+                    Some(IDC_HAND)
+                } else {
+                    None
+                }
+            });
+            match shape.and_then(|shape| unsafe { LoadCursorW(None, shape) }.ok()) {
+                Some(cursor) => {
+                    unsafe { SetCursor(Some(cursor)) };
+                    LRESULT(1)
+                }
+                None => unsafe { DefWindowProcW(window, message, wparam, lparam) },
             }
-            LRESULT(1)
         }
         WM_SIZE => {
             if let Some(state) = state_mut(window) {

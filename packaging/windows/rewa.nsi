@@ -132,6 +132,10 @@ Section "Rewa" MainSection
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rewa" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rewa" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Rewa" "NoRepair" 1
+
+  ; the executables keep their paths across updates, so Explorer would keep
+  ; showing a cached old icon; SHCNE_ASSOCCHANGED makes it read them again
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 SectionEnd
 
 Section "Uninstall"
