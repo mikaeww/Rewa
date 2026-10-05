@@ -1,5 +1,7 @@
 Unicode true
-RequestExecutionLevel user
+; Every Rewa executable runs elevated (see rewa.manifest), so an unelevated
+; setup or uninstaller could neither stop them nor remove the elevated logon task.
+RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
 !ifndef VERSION

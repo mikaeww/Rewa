@@ -332,9 +332,11 @@ reinstalls while both processes are running, verifies the upgraded app starts
 again, and verifies that uninstalling a running installation stops the app,
 tray, and recorder before removing their executables. The NSIS setup installs
 per user below `%LOCALAPPDATA%\Rewa`
-and adds Start-menu shortcuts for Rewa and its uninstaller. The setup itself
-does not ask for administrator rights; the application does, once per start,
-because the replay shortcut is dead over an anti-cheat game without them. The
+and adds Start-menu shortcuts for Rewa and its uninstaller. The application
+asks for administrator rights once per start, because the replay shortcut is
+dead over an anti-cheat game without them, and so do setup and uninstaller:
+unelevated they could neither stop the elevated app, tray and recorder nor
+remove the elevated logon task. The
 finish page opens the full application, which starts the independent tray and
 recorder. Upgrades stop the old tray-only process
 before replacing files and preserve an existing autostart opt-in by migrating it
@@ -348,9 +350,10 @@ installations.
 - clips: `%USERPROFILE%\Videos\Rewa` by default;
 - control endpoint: `\\.\pipe\rewa`.
 
-Uninstalling through the NSIS uninstaller removes installed binaries, shortcuts,
-the uninstall registration, and the optional
-autostart value. It intentionally does not delete configuration or clips.
+Uninstalling through the NSIS uninstaller stops the app, tray and recorder, then
+removes installed binaries, shortcuts, the uninstall registration, and the
+optional autostart value and logon task. It intentionally does not delete
+configuration or clips.
 
 ## Validation status
 
