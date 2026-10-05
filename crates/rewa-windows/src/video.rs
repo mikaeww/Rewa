@@ -92,45 +92,25 @@ pub struct VideoRuntime {
     device: windows::Win32::Graphics::Direct3D11::ID3D11Device,
     context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
     adapter: GraphicsAdapterInfo,
+    adapter_luid: windows::Win32::Foundation::LUID,
     support: HardwareEncoderSupport,
 }
 
 #[cfg(target_os = "windows")]
 impl VideoRuntime {
-    pub fn initialize() -> Result<Self, VideoError> {
-        use windows::Win32::Foundation::HMODULE;
-        use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
-        use windows::Win32::Graphics::Direct3D11::{
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
-            D3D11CreateDevice,
-        };
-        use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
-
+    pub fn initialize(requested: Codec) -> Result<Self, VideoError> {
         let com = ComRuntime::initialize()?;
         let media_foundation = MediaFoundationRuntime::initialize()?;
-        let mut device = None;
-        let mut context = None;
-        unsafe {
-            D3D11CreateDevice(
-                None::<&IDXGIAdapter>,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                None,
-                Some(&mut context),
-            )
+        let mut candidates = Vec::new();
+        for (adapter, luid) in hardware_adapters()? {
+            candidates.push(((adapter, luid), query_hardware_encoder_support(luid)?));
         }
-        .map_err(|error| VideoError::Initialization(error.to_string()))?;
-        let device =
-            device.ok_or_else(|| VideoError::Initialization("D3D11 returned no device".into()))?;
-        let context = context.ok_or_else(|| {
-            VideoError::Initialization("D3D11 returned no immediate context".into())
-        })?;
+        // Device and encoder must sit on the same GPU: NVENC handed a device of the
+        // integrated GPU rejects it with E_OUTOFMEMORY.
+        let ((adapter, adapter_luid), support) = first_capable_adapter(candidates, requested)
+            .ok_or(VideoError::NoHardwareEncoder(requested))?;
+        let (device, context) = create_device(&adapter)?;
         let adapter = graphics_adapter_info(&device)?;
-        let support = query_hardware_encoder_support()?;
 
         Ok(Self {
             _com: com,
@@ -138,6 +118,7 @@ impl VideoRuntime {
             device,
             context,
             adapter,
+            adapter_luid,
             support,
         })
     }
@@ -156,6 +137,10 @@ impl VideoRuntime {
         &self.adapter
     }
 
+    pub(crate) fn adapter_luid(&self) -> windows::Win32::Foundation::LUID {
+        self.adapter_luid
+    }
+
     pub fn device(&self) -> &windows::Win32::Graphics::Direct3D11::ID3D11Device {
         &self.device
     }
@@ -163,6 +148,89 @@ impl VideoRuntime {
     pub fn context(&self) -> &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext {
         &self.context
     }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn first_capable_adapter<T>(
+    candidates: impl IntoIterator<Item = (T, HardwareEncoderSupport)>,
+    requested: Codec,
+) -> Option<(T, HardwareEncoderSupport)> {
+    candidates
+        .into_iter()
+        .find(|(_, support)| support.select(requested).is_some())
+}
+
+#[cfg(target_os = "windows")]
+fn hardware_adapters() -> Result<
+    Vec<(
+        windows::Win32::Graphics::Dxgi::IDXGIAdapter1,
+        windows::Win32::Foundation::LUID,
+    )>,
+    VideoError,
+> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND,
+        DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter1, IDXGIFactory6,
+    };
+
+    let factory: IDXGIFactory6 = unsafe { CreateDXGIFactory1() }
+        .map_err(|error| VideoError::Initialization(error.to_string()))?;
+    let mut adapters = Vec::new();
+    for index in 0_u32.. {
+        let adapter: IDXGIAdapter1 = match unsafe {
+            factory.EnumAdapterByGpuPreference(index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)
+        } {
+            Ok(adapter) => adapter,
+            Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
+            Err(error) => return Err(VideoError::Initialization(error.to_string())),
+        };
+        let description = unsafe { adapter.GetDesc1() }
+            .map_err(|error| VideoError::Initialization(error.to_string()))?;
+        if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
+            adapters.push((adapter, description.AdapterLuid));
+        }
+    }
+    Ok(adapters)
+}
+
+#[cfg(target_os = "windows")]
+fn create_device(
+    adapter: &windows::Win32::Graphics::Dxgi::IDXGIAdapter1,
+) -> Result<
+    (
+        windows::Win32::Graphics::Direct3D11::ID3D11Device,
+        windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    ),
+    VideoError,
+> {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
+        D3D11CreateDevice,
+    };
+
+    let mut device = None;
+    let mut context = None;
+    unsafe {
+        D3D11CreateDevice(
+            adapter,
+            D3D_DRIVER_TYPE_UNKNOWN,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut context),
+        )
+    }
+    .map_err(|error| VideoError::Initialization(error.to_string()))?;
+    let device =
+        device.ok_or_else(|| VideoError::Initialization("D3D11 returned no device".into()))?;
+    let context = context
+        .ok_or_else(|| VideoError::Initialization("D3D11 returned no immediate context".into()))?;
+    Ok((device, context))
 }
 
 #[cfg(target_os = "windows")]
@@ -244,32 +312,39 @@ impl Drop for MediaFoundationRuntime {
 }
 
 #[cfg(target_os = "windows")]
-fn query_hardware_encoder_support() -> Result<HardwareEncoderSupport, VideoError> {
+fn query_hardware_encoder_support(
+    adapter: windows::Win32::Foundation::LUID,
+) -> Result<HardwareEncoderSupport, VideoError> {
     use windows::Win32::Media::MediaFoundation::{
         MFVideoFormat_AV1, MFVideoFormat_H264, MFVideoFormat_HEVC,
     };
 
     Ok(HardwareEncoderSupport {
-        h264: has_hardware_encoder(MFVideoFormat_H264)?,
-        hevc: has_hardware_encoder(MFVideoFormat_HEVC)?,
-        av1: has_hardware_encoder(MFVideoFormat_AV1)?,
+        h264: has_hardware_encoder(MFVideoFormat_H264, adapter)?,
+        hevc: has_hardware_encoder(MFVideoFormat_HEVC, adapter)?,
+        av1: has_hardware_encoder(MFVideoFormat_AV1, adapter)?,
     })
 }
 
 #[cfg(target_os = "windows")]
-fn has_hardware_encoder(output_subtype: windows::core::GUID) -> Result<bool, VideoError> {
-    Ok(!hardware_encoder_activations(output_subtype)?.is_empty())
+fn has_hardware_encoder(
+    output_subtype: windows::core::GUID,
+    adapter: windows::Win32::Foundation::LUID,
+) -> Result<bool, VideoError> {
+    Ok(!hardware_encoder_activations(output_subtype, adapter)?.is_empty())
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) fn hardware_encoder_activations(
     output_subtype: windows::core::GUID,
+    adapter: windows::Win32::Foundation::LUID,
 ) -> Result<Vec<windows::Win32::Media::MediaFoundation::IMFActivate>, VideoError> {
     use std::ptr;
 
     use windows::Win32::Media::MediaFoundation::{
-        IMFActivate, MFMediaType_Video, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE,
-        MFT_ENUM_FLAG_SORTANDFILTER, MFT_REGISTER_TYPE_INFO, MFTEnumEx, MFVideoFormat_NV12,
+        IMFActivate, MFCreateAttributes, MFMediaType_Video, MFT_CATEGORY_VIDEO_ENCODER,
+        MFT_ENUM_ADAPTER_LUID, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER,
+        MFT_REGISTER_TYPE_INFO, MFTEnum2, MFVideoFormat_NV12,
     };
     use windows::Win32::System::Com::CoTaskMemFree;
 
@@ -281,14 +356,29 @@ pub(crate) fn hardware_encoder_activations(
         guidMajorType: MFMediaType_Video,
         guidSubtype: output_subtype,
     };
+    let mut attributes = None;
+    unsafe { MFCreateAttributes(&mut attributes, 1) }
+        .map_err(|error| VideoError::Initialization(error.to_string()))?;
+    let attributes = attributes.ok_or_else(|| {
+        VideoError::Initialization("Media Foundation returned no attribute store".into())
+    })?;
+    let luid: Vec<u8> = adapter
+        .LowPart
+        .to_le_bytes()
+        .into_iter()
+        .chain(adapter.HighPart.to_le_bytes())
+        .collect();
+    unsafe { attributes.SetBlob(&MFT_ENUM_ADAPTER_LUID, &luid) }
+        .map_err(|error| VideoError::Initialization(error.to_string()))?;
     let mut activations: *mut Option<IMFActivate> = ptr::null_mut();
     let mut count = 0_u32;
     unsafe {
-        MFTEnumEx(
+        MFTEnum2(
             MFT_CATEGORY_VIDEO_ENCODER,
             MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
             Some(&input),
             Some(&output),
+            &attributes,
             &mut activations,
             &mut count,
         )
@@ -340,6 +430,38 @@ mod tests {
     #[test]
     fn empty_support_never_selects_a_cpu_fallback() {
         assert_eq!(HardwareEncoderSupport::default().select(Codec::Auto), None);
+    }
+
+    #[test]
+    fn adapter_choice_skips_gpus_without_the_requested_encoder() {
+        let integrated = HardwareEncoderSupport {
+            h264: true,
+            hevc: false,
+            av1: false,
+        };
+        let discrete = HardwareEncoderSupport {
+            h264: true,
+            hevc: true,
+            av1: true,
+        };
+        let candidates = [
+            ("none", HardwareEncoderSupport::default()),
+            ("igpu", integrated),
+            ("dgpu", discrete),
+        ];
+
+        assert_eq!(
+            first_capable_adapter(candidates, Codec::Auto).map(|(name, _)| name),
+            Some("igpu")
+        );
+        assert_eq!(
+            first_capable_adapter(candidates, Codec::Av1).map(|(name, _)| name),
+            Some("dgpu")
+        );
+        assert_eq!(
+            first_capable_adapter([("none", HardwareEncoderSupport::default())], Codec::Auto),
+            None
+        );
     }
 
     #[test]

@@ -59,6 +59,7 @@ pub struct HardwareVideoEncoder {
 impl HardwareVideoEncoder {
     pub fn initialize(
         device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+        adapter: windows::Win32::Foundation::LUID,
         codec: crate::video::HardwareCodec,
         settings: EncoderSettings,
     ) -> Result<Self, VideoError> {
@@ -70,14 +71,15 @@ impl HardwareVideoEncoder {
         use windows::core::Interface;
 
         let settings = settings.validate()?;
-        let activation = crate::video::hardware_encoder_activations(codec.media_subtype())?
-            .into_iter()
-            .next()
-            .ok_or(VideoError::NoHardwareEncoder(match codec {
-                crate::video::HardwareCodec::H264 => rewa_core::config::Codec::H264,
-                crate::video::HardwareCodec::Hevc => rewa_core::config::Codec::Hevc,
-                crate::video::HardwareCodec::Av1 => rewa_core::config::Codec::Av1,
-            }))?;
+        let activation =
+            crate::video::hardware_encoder_activations(codec.media_subtype(), adapter)?
+                .into_iter()
+                .next()
+                .ok_or(VideoError::NoHardwareEncoder(match codec {
+                    crate::video::HardwareCodec::H264 => rewa_core::config::Codec::H264,
+                    crate::video::HardwareCodec::Hevc => rewa_core::config::Codec::Hevc,
+                    crate::video::HardwareCodec::Av1 => rewa_core::config::Codec::Av1,
+                }))?;
         let transform: IMFTransform = unsafe { activation.ActivateObject() }
             .map_err(|error| VideoError::Initialization(error.to_string()))?;
         let events = transform.cast().map_err(initialization_error)?;

@@ -276,8 +276,13 @@ numbers appear. Attach it when reporting an audio problem. It is restarted once
 it passes 1 MB.
 
 `rewactl config` prints the complete
-current configuration. `rewactl codecs` lists only hardware video encoders
-reported by Media Foundation; `rewactl status` reports which one the live
+current configuration. The recorder walks the graphics adapters in Windows'
+high-performance order and records on the first one whose own hardware encoder
+handles the configured codec, so device and encoder always share a GPU; a
+device on the integrated GPU handed to NVENC fails with "Not enough memory
+resources" (`0x8007000E`). The log names the codec and adapter it settled on.
+`rewactl codecs` lists the hardware video encoders of that adapter as reported
+by Media Foundation; `rewactl status` reports which one the live
 pipeline selected, the exact D3D11 adapter name and PCI vendor/device IDs used
 by capture, its current encoded replay size, and the buffered duration.
 `Reload settings` also rebuilds a pipeline in the error state, so a corrected

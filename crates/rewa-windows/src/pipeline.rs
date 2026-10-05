@@ -696,7 +696,12 @@ impl VideoStage {
         for _ in 0..ENCODER_SURFACE_COUNT {
             available_surfaces.push(converter.create_output_surface()?);
         }
-        let encoder = HardwareVideoEncoder::initialize(runtime.device(), codec, settings)?;
+        let encoder = HardwareVideoEncoder::initialize(
+            runtime.device(),
+            runtime.adapter_luid(),
+            codec,
+            settings,
+        )?;
         Ok(Self {
             capture,
             info,
@@ -922,8 +927,13 @@ fn run_pipeline(
 
     let mut watch = crate::game::GameWatch::new(&config.capture.games);
     let initialized = (|| -> Result<_, VideoError> {
-        let runtime = VideoRuntime::initialize()?;
+        let runtime = VideoRuntime::initialize(config.capture.codec)?;
         let codec = runtime.select_encoder(config.capture.codec)?;
+        rewa_core::diagnostic!(
+            "Rewa capture: encoding {} on {}",
+            codec.as_str(),
+            runtime.adapter().name
+        );
         let target = resolve_target(&config, &mut watch, TargetPreference::Automatic)?;
         let stage = start_stage(
             &StageContext {

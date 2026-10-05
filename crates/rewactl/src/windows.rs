@@ -36,8 +36,8 @@ pub fn run() -> Result<(), String> {
 }
 
 fn print_hardware_codecs() -> Result<(), String> {
-    let runtime =
-        rewa_windows::video::VideoRuntime::initialize().map_err(|error| error.to_string())?;
+    let runtime = rewa_windows::video::VideoRuntime::initialize(Codec::Auto)
+        .map_err(|error| error.to_string())?;
     let support = runtime.support();
     for (name, available) in [
         ("h264", support.h264),
