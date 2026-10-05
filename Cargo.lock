@@ -506,13 +506,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rewa-shell"
+version = "2.2.3"
+dependencies = [
+ "libc",
+ "rewa-core",
+ "rewa-windows",
+ "windows",
+]
+
+[[package]]
 name = "rewa-ui"
 version = "2.2.3"
 dependencies = [
  "gdk-pixbuf",
  "gtk4",
  "rewa-core",
- "serde_json",
+ "rewa-shell",
 ]
 
 [[package]]
@@ -520,6 +530,7 @@ name = "rewa-win-ui"
 version = "2.2.3"
 dependencies = [
  "rewa-core",
+ "rewa-shell",
  "rewa-windows",
  "windows",
  "windows-core",

@@ -12,7 +12,7 @@ Nothing is uploaded, there is no account and no telemetry.
 [Report an issue](https://github.com/mikaeww/Rewa/issues)
 
 > [!NOTE]
-> Windows is the main platform. On Linux the recorder works, the window is still unfinished.
+> Windows is the main platform. Linux has the same window; the tray icon and the saved-clip toast are Windows only.
 
 ## Features
 

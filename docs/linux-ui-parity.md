@@ -1,63 +1,52 @@
-# Linux UI parity contract
+# Linux UI parity
 
-The current Windows application is the visual and behavioral reference for the
-Linux GTK application. Parity covers the complete application surface inside
-the client area: hierarchy, copy, spacing, color, responsive structure,
-interaction states, keyboard behavior, and clip-management workflows.
+The Linux window shows the same interface as the Windows application. It is not
+a second design: both draw from one model and the same layout numbers.
 
-Platform chrome and system-owned interactions remain native. GTK and GStreamer
-replace Win32, Direct2D, DirectWrite, Media Foundation, and Windows pickers;
-systemd user services replace Windows startup registration. These substitutions
-must preserve the visible task and feedback rather than imitate a foreign
-platform control.
+## How the two sides share the interface
 
-## Visual source of truth
-
-The live implementation in `crates/rewa-win-ui/src/renderer.rs` wins over old
-screenshots and earlier parity notes. The shared baseline is:
-
-- canvas `#0a0a0b`, rail `#0d0d0e`, stage `#0e0e0f`, surface `#111113`;
-- primary text `#f2f2f2`, secondary text `#99999f`, muted text `#6f6f75`;
-- no coloured accents: thumbnails carry all colour, the shell stays grey;
-- 165 logical-pixel navigation sidebar;
-- 96 logical-pixel recording toolbar and 84 logical-pixel status bar;
-- 1440 × 900 default and 980 × 680 minimum client size.
-
-## Delivery matrix
-
-| Surface | Required states | Status |
+| Part | Windows | Linux |
 | --- | --- | --- |
-| Shell | sidebar, recording toolbar, status bar, Clips search | Implemented |
-| Clips | populated, empty, search empty, favourites, filters, scroll, selection, context menu | Implemented |
-| Collections | all clips, folder selected, empty, drag target, bulk move | Implemented |
-| Player | loading, playing, paused, scrub, volume, mute, fullscreen | Implemented |
-| Editor | timing load, preview, handle drag, save, replace, error | Implemented |
-| Settings | five tabs, menus, hotkey capture, validation, success, error | Implemented |
+| State, actions, filters, trim logic | `crates/rewa-shell/src/model.rs` | same file |
+| German and English text | `crates/rewa-shell/src/text.rs` | same file; the few strings that name the OS differ by `cfg` |
+| Springs (glide, settle, quick) | `crates/rewa-shell/src/motion.rs` | same file |
+| Local calendar time | `crates/rewa-shell/src/clock.rs` | same file (`localtime_r` instead of the Windows time zone API) |
+| Drawing and hit regions | `crates/rewa-win-ui/src/renderer.rs` (Direct2D) | `crates/rewa-ui/src/render/` (GTK snapshot) |
+| Window, input, workers | `crates/rewa-win-ui/src/app.rs` | `crates/rewa-ui/src/app/` |
 
-## Verification
+The Linux renderer is a port of the Windows renderer: pages, controls and
+geometry keep their Windows names and numbers, only the primitives in
+`render/painter.rs`, `render/glyph.rs` and `render/images.rs` differ. A change to
+the look is made in `renderer.rs` and then in the module of the same name under
+`crates/rewa-ui/src/render/`.
 
-Reference captures are required at 1440 × 900, 1280 × 760, and 980 × 680.
-Linux captures use a fixed GTK theme and font environment. Geometry may differ
-by at most two logical pixels; font antialiasing and native window chrome are
-excluded from pixel comparison. Every visible action must remain keyboard
-reachable and expose an accessible label.
+## Platform substitutions
 
-## Verification record
+| Windows | Linux |
+| --- | --- |
+| Segoe UI Variable | the desktop font from `gtk-font-name` |
+| Media Foundation player in a child window | `gtk::MediaFile` (GStreamer) drawn into the same surface |
+| Shell thumbnails and durations | `rewa_core::clips::build_preview` (ffmpeg, ffprobe) on a worker |
+| Named pipe to `rewad.exe` | Unix socket to `rewad`, started with `systemctl --user` |
+| Registered hotkey | Hyprland bind through `rewa_core::shortcuts`; other desktops get the `rewactl save` command to bind |
+| Task Scheduler autostart | `systemctl --user enable rewad.service` |
+| WASAPI microphone meter | `parec`, only while the microphone test runs |
+| Explorer, shell drag and drop | GTK file launcher and `gdk::Drag` with a file list |
+| Tray icon, saved-clip toast | not on Linux |
 
-- Static isolated Gamescope captures verified Shell, Home, populated Library,
-  Collections, Player, Editor, and all five Settings panels at 1440 × 900.
-- Compact Settings was verified at 980 × 680; responsive geometry is driven by
-  the 1080-pixel rail/content threshold and 980-pixel compact-header threshold.
-- Populated Library and Collections use the Windows column thresholds, 12-pixel
-  grid gaps, and card preview geometry `(card width - 12) × 9 / 16`.
-- Clip actions are exposed by right-click and `Shift+F10`; `Ctrl+K` navigates to
-  Library and focuses search from every surface; Space controls Player/Editor.
-- Player controls and the Editor timeline expose accessible names and value
-  text. The Editor timeline also supports arrow-key playhead/start/end changes.
-- Workspace tests and Clippy with warnings denied pass, and the Impeccable
-  mechanical detector reports no findings.
+## Checking
 
-Media playback is excluded from automated capture runs because it can route
-audio through the user's active PipeWire session. Player and Editor playback
-were verified once, then all Gamescope, GStreamer, and Rewa test processes
-were stopped; subsequent checks are static and silent.
+- `cargo test --workspace` and `cargo clippy -p rewa-ui -p rewa-shell --all-targets -- -D warnings`.
+- `rewa-ui --render OUT.png [clips|collections|general|recording|audio|storage|about] [dark|light|cafe|pink|candy] [folded] [capture] [filters] [english] [WxH]`
+  paints one page into a PNG without a window. Under Hyprland run it as
+  `env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a rewa-ui --render …`, otherwise
+  GTK would connect to the session.
+- Interactive checks run the real binary in its own Xvfb server with
+  `GSK_RENDERER=cairo REWA_UI_NON_UNIQUE=1`, a copied `XDG_CONFIG_HOME`, and
+  `PULSE_SERVER`/`PIPEWIRE_REMOTE` pointed at nothing so playback stays silent.
+
+## Known gaps
+
+- The Linux window has no accessibility tree; like the Windows renderer it draws
+  everything itself.
+- As on Windows, playback has no volume slider; fullscreen has a mute door.

@@ -5,9 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Linux interface for Rewa, drawn like the Windows one"
 
 [dependencies]
 gdk-pixbuf.workspace = true
 gtk.workspace = true
-serde_json.workspace = true
 rewa-core = { path = "../rewa-core" }
+rewa-shell = { path = "../rewa-shell" }

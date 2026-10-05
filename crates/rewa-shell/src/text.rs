@@ -1,6 +1,7 @@
 use rewa_core::config::Language;
 
-/// Every visible string of the Windows interface, in one place per language.
+/// Every visible string of the interface, in one place per language; the few
+/// that name the operating system differ between Windows and Linux.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Strings {
     pub language: Language,
@@ -261,6 +262,8 @@ pub struct Strings {
     pub notice_folder_picker_failed: &'static str,
     pub notice_shortcut_failed: &'static str,
     pub notice_shortcut_unsafe: &'static str,
+    /// Linux desktops without Hyprland bind the save command themselves.
+    pub notice_shortcut_manual: &'static str,
     pub notice_cut_running: &'static str,
     pub notice_replace_running: &'static str,
     pub notice_cut_lossless: &'static str,
@@ -428,7 +431,10 @@ pub const GERMAN: Strings = Strings {
     clip_actions: "Clip-Aktionen",
     favorite_add: "Als Favorit merken",
     favorite_remove: "Favorit entfernen",
+    #[cfg(target_os = "windows")]
     open_in_explorer: "Im Explorer zeigen",
+    #[cfg(not(target_os = "windows"))]
+    open_in_explorer: "Im Dateimanager zeigen",
     open_in_player: "Mit Medienwiedergabe öffnen",
     edit_clip: "Clip bearbeiten",
     rename: "Umbenennen",
@@ -453,7 +459,10 @@ pub const GERMAN: Strings = Strings {
     panel_storage: "Speicher",
     about_label: "Über rewa",
     autostart: "Programmstart",
+    #[cfg(target_os = "windows")]
     autostart_hint: "rewa automatisch mit Windows starten",
+    #[cfg(not(target_os = "windows"))]
+    autostart_hint: "rewa automatisch bei der Anmeldung starten",
     replay_hotkey: "Replay-Hotkey",
     replay_hotkey_hint: "Speichert den aktuellen Replay",
     theme_row: "Design",
@@ -485,7 +494,10 @@ pub const GERMAN: Strings = Strings {
     microphone: "Mikrofon",
     microphone_hint: "Eingabegerät mit aufnehmen",
     microphone_device: "Mikrofon-Gerät",
+    #[cfg(target_os = "windows")]
     microphone_device_hint: "Aktives Windows-Eingabegerät",
+    #[cfg(not(target_os = "windows"))]
+    microphone_device_hint: "Aktives Eingabegerät",
     microphone_level: "Mikrofon-Pegel",
     microphone_level_hint: "Lautstärke der Stimme",
     storage_location: "Speicherort",
@@ -494,11 +506,17 @@ pub const GERMAN: Strings = Strings {
     storage_limit_hint: "Maximaler Platz für Clips",
     on: "An",
     off: "Aus",
+    #[cfg(target_os = "windows")]
     windows_default: "Windows-Standard",
+    #[cfg(not(target_os = "windows"))]
+    windows_default: "Systemstandard",
     primary_display: "Primärer Bildschirm",
     hotkey_activating: "Aktivieren...",
     hotkey_prompt: "Tastenkombination drücken…",
+    #[cfg(target_os = "windows")]
     hotkey_rule: "Strg oder Umschalt plus eine Taste, oder F1–F24 allein",
+    #[cfg(not(target_os = "windows"))]
+    hotkey_rule: "Mindestens eine Zusatztaste plus eine Taste, oder F1–F24 allein",
     hotkey_key_unusable: "Diese Taste geht nicht als Hotkey",
     hotkey_next_start: "Gespeichert, aktiv sobald die Aufnahme läuft",
     hotkey_unbound: "Nicht belegt",
@@ -591,7 +609,10 @@ pub const GERMAN: Strings = Strings {
     notice_collection_gone: "Sammlung ist nicht mehr verfügbar",
     notice_no_clip_loaded: "Kein Clip geladen",
     notice_already_in_collection: "Die gewählten Clips liegen schon in dieser Sammlung",
+    #[cfg(target_os = "windows")]
     notice_microphone_fallback: "Gespeichertes Mikrofon nicht verfügbar; Windows-Standard wird getestet",
+    #[cfg(not(target_os = "windows"))]
+    notice_microphone_fallback: "Gespeichertes Mikrofon nicht verfügbar; Systemstandard wird getestet",
     notice_microphone_test: "Mikrofontest",
     notice_cannot_rename_clip: "Clip konnte nicht umbenannt werden",
     notice_cannot_delete_clip: "Clip konnte nicht gelöscht werden",
@@ -608,6 +629,7 @@ pub const GERMAN: Strings = Strings {
     notice_folder_picker_failed: "Ordnerauswahl fehlgeschlagen",
     notice_shortcut_failed: "Tastenkombination konnte nicht geändert werden",
     notice_shortcut_unsafe: "Wähle eine andere Tastenkombination",
+    notice_shortcut_manual: "Kürzel gespeichert; im Desktop diesen Befehl darauf legen",
     notice_cut_running: "Zuschnitt läuft im Hintergrund…",
     notice_replace_running: "Original wird im Hintergrund ersetzt…",
     notice_cut_lossless: "Verlustfrei geschnitten",
@@ -700,7 +722,10 @@ pub const ENGLISH: Strings = Strings {
     clip_actions: "Clip actions",
     favorite_add: "Add to favourites",
     favorite_remove: "Remove from favourites",
+    #[cfg(target_os = "windows")]
     open_in_explorer: "Show in Explorer",
+    #[cfg(not(target_os = "windows"))]
+    open_in_explorer: "Show in file manager",
     open_in_player: "Open in media player",
     edit_clip: "Trim clip",
     rename: "Rename",
@@ -724,7 +749,10 @@ pub const ENGLISH: Strings = Strings {
     panel_audio: "Audio",
     panel_storage: "Storage",
     about_label: "About rewa",
+    #[cfg(target_os = "windows")]
     autostart: "Start with Windows",
+    #[cfg(not(target_os = "windows"))]
+    autostart: "Start at sign-in",
     autostart_hint: "Launch rewa when you sign in",
     replay_hotkey: "Replay shortcut",
     replay_hotkey_hint: "Saves the current replay",
@@ -757,7 +785,10 @@ pub const ENGLISH: Strings = Strings {
     microphone: "Microphone",
     microphone_hint: "Record your input device",
     microphone_device: "Microphone device",
+    #[cfg(target_os = "windows")]
     microphone_device_hint: "Active Windows input device",
+    #[cfg(not(target_os = "windows"))]
+    microphone_device_hint: "Active input device",
     microphone_level: "Microphone level",
     microphone_level_hint: "Loudness of your voice",
     storage_location: "Clip folder",
@@ -766,11 +797,17 @@ pub const ENGLISH: Strings = Strings {
     storage_limit_hint: "Maximum space for clips",
     on: "On",
     off: "Off",
+    #[cfg(target_os = "windows")]
     windows_default: "Windows default",
+    #[cfg(not(target_os = "windows"))]
+    windows_default: "System default",
     primary_display: "Primary display",
     hotkey_activating: "Activating...",
     hotkey_prompt: "Press a shortcut…",
+    #[cfg(target_os = "windows")]
     hotkey_rule: "Ctrl or Shift plus one key, or F1–F24 alone",
+    #[cfg(not(target_os = "windows"))]
+    hotkey_rule: "At least one modifier plus a key, or F1–F24 alone",
     hotkey_key_unusable: "That key cannot be a shortcut",
     hotkey_next_start: "Saved, active once the recorder runs",
     hotkey_unbound: "Not set",
@@ -863,7 +900,10 @@ pub const ENGLISH: Strings = Strings {
     notice_collection_gone: "Collection is no longer available",
     notice_no_clip_loaded: "No clip is loaded",
     notice_already_in_collection: "The selected clips are already in this collection",
+    #[cfg(target_os = "windows")]
     notice_microphone_fallback: "Saved microphone unavailable; testing the Windows default",
+    #[cfg(not(target_os = "windows"))]
+    notice_microphone_fallback: "Saved microphone unavailable; testing the system default",
     notice_microphone_test: "Microphone test",
     notice_cannot_rename_clip: "Cannot rename clip",
     notice_cannot_delete_clip: "Cannot delete clip",
@@ -880,6 +920,7 @@ pub const ENGLISH: Strings = Strings {
     notice_folder_picker_failed: "Folder picker failed",
     notice_shortcut_failed: "Cannot change the shortcut",
     notice_shortcut_unsafe: "Choose a different shortcut",
+    notice_shortcut_manual: "Shortcut saved; bind this command to it in your desktop",
     notice_cut_running: "Cutting on a background worker…",
     notice_replace_running: "Replacing the original on a background worker…",
     notice_cut_lossless: "Cut without re-encoding",
@@ -914,7 +955,7 @@ pub const fn strings(language: Language) -> &'static Strings {
     }
 }
 
-/// Resolves `System` to the Windows display language.
+/// Resolves `System` to the display language of the operating system.
 pub fn resolve(language: Language) -> Language {
     match language {
         Language::System => system_language(),
@@ -935,9 +976,19 @@ fn system_language() -> Language {
     }
 }
 
+/// Follows the POSIX locale chain, so a German session gets the German interface.
 #[cfg(not(target_os = "windows"))]
 fn system_language() -> Language {
-    Language::English
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+        .unwrap_or_default();
+    if locale.starts_with("de") {
+        Language::German
+    } else {
+        Language::English
+    }
 }
 
 #[cfg(test)]

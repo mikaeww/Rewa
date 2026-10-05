@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/rewa-core",
+    "crates/rewa-shell",
     "crates/rewa-ui",
     "crates/rewa-win-ui",
     "crates/rewa-windows",

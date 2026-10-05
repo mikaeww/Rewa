@@ -9,6 +9,7 @@ description = "Native Windows interface and tray for Rewa"
 
 [dependencies]
 rewa-core = { path = "../rewa-core" }
+rewa-shell = { path = "../rewa-shell" }
 rewa-windows = { path = "../rewa-windows" }
 
 [target.'cfg(windows)'.dependencies]

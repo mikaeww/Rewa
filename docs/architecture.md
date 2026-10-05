@@ -10,14 +10,16 @@ rewactl ── Unix socket ──► rewad ── signals ──► gpu-screen-r
                                       │
                                       └──────────────► local clip directory
 
-rewa-ui ── writes local config ──► ~/.config/rewa/config.toml
+rewa-ui ── Unix socket ──► rewad   (status, save, reload)
      │
-     └── exits after settings are closed
+     └── writes ~/.config/rewa/config.toml, browses and trims the clip directory
 ```
 
 `rewad` links only the Rust standard library, Serde, and the configuration
 parser. It does not link GTK. `rewa-ui` is a separate executable, so none
-of its UI dependencies are mapped into the daemon.
+of its UI dependencies are mapped into the daemon. It shares its state, text
+and motion with the Windows window through `rewa-shell`; see
+[Linux UI parity](linux-ui-parity.md).
 
 On Hyprland, Rewa keeps the native runtime bind and precise focused-monitor
 metadata. On Plasma and other desktops, GPU Screen Recorder supplies the
@@ -35,6 +37,3 @@ without a second encode.
 is restarted with a bounded backoff, while systemd independently keeps the
 daemon attached to the user's `default.target`. This avoids relying on a
 desktop-specific graphical-session target that may never become active.
-
-Quickshell and Pywal palette discovery are optional UI enhancements. Their
-absence does not affect capture, controls, audio, notifications, or startup.

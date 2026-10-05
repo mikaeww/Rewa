@@ -26,6 +26,10 @@ pub fn local(time: SystemTime) -> Civil {
     if let Some(civil) = windows_local(time) {
         return civil;
     }
+    #[cfg(target_os = "linux")]
+    if let Some(civil) = linux_local(time) {
+        return civil;
+    }
     utc(time)
 }
 
@@ -138,6 +142,24 @@ fn windows_local(time: SystemTime) -> Option<Civil> {
         day: civil.wDay as u8,
         hour: civil.wHour as u8,
         minute: civil.wMinute as u8,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_local(time: SystemTime) -> Option<Civil> {
+    let seconds = libc::time_t::try_from(time.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
+    // SAFETY: `tm` is plain old data that localtime_r fully writes before we read it,
+    // and both pointers stay valid for the call; the reentrant variant keeps no shared state.
+    let mut civil = unsafe { std::mem::zeroed::<libc::tm>() };
+    if unsafe { libc::localtime_r(&seconds, &mut civil) }.is_null() {
+        return None;
+    }
+    Some(Civil {
+        year: civil.tm_year + 1_900,
+        month: u8::try_from(civil.tm_mon + 1).ok()?,
+        day: u8::try_from(civil.tm_mday).ok()?,
+        hour: u8::try_from(civil.tm_hour).ok()?,
+        minute: u8::try_from(civil.tm_min).ok()?,
     })
 }
 
