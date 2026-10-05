@@ -1468,7 +1468,25 @@ fn handle_action(window: HWND, state: &mut AppState, action: Action) {
             update_player_window(state);
         }
         Action::ConfirmDelete => {
-            confirm_delete(&mut state.model);
+            let open_clip = matches!(
+                state.model.page,
+                crate::model::Page::Player | crate::model::Page::Editor
+            ) && matches!(
+                state.model.pending_delete,
+                Some(DeleteTarget::Clip(index)) if state.model.active_clip == Some(index)
+            );
+            if open_clip {
+                // the player holds the file open, which would block or delay the delete
+                stop_player(state);
+            }
+            let deleted = confirm_delete(&mut state.model);
+            if open_clip {
+                if deleted {
+                    handle_action(window, state, Action::Home);
+                } else {
+                    open_current_clip(state);
+                }
+            }
             update_player_window(state);
         }
         Action::ToggleFolderColumn => {
@@ -2109,15 +2127,15 @@ fn confirm_prompt(state: &mut AppState) {
     }
 }
 
-fn confirm_delete(model: &mut UiModel) {
+fn confirm_delete(model: &mut UiModel) -> bool {
     let Some(target) = model.pending_delete.take() else {
-        return;
+        return false;
     };
     match target {
         DeleteTarget::Clip(index) => {
             let Some(clip) = model.clips.get(index).cloned() else {
                 model.notice = Some(model.strings().notice_clip_gone.to_owned());
-                return;
+                return false;
             };
             match rewa_core::clips::delete(&clip, &model.paths.thumbnail_dir) {
                 Ok(()) => {
@@ -2126,12 +2144,14 @@ fn confirm_delete(model: &mut UiModel) {
                     let result = model.refresh();
                     let message = model.strings().notice_clip_deleted;
                     set_result(model, result, message);
+                    true
                 }
                 Err(error) => {
                     model.notice = Some(format!(
                         "{}: {error}",
                         model.strings().notice_cannot_delete_clip
                     ));
+                    false
                 }
             }
         }
@@ -2145,12 +2165,14 @@ fn confirm_delete(model: &mut UiModel) {
                 let result = model.refresh();
                 let message = model.strings().notice_collection_deleted;
                 set_result(model, result, message);
+                true
             }
             Err(error) => {
                 model.notice = Some(format!(
                     "{}: {error}",
                     model.strings().notice_cannot_delete_collection
                 ));
+                false
             }
         },
     }
