@@ -6,7 +6,7 @@ on:
       version:
         description: Semantic version without the v prefix
         required: true
-        default: 2.2.2
+        default: 2.2.3
         type: string
 
 permissions:
@@ -68,4 +68,4 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Rewa $env:RELEASE_VERSION" `
-            --notes "Fixes the replay not starting on PCs with two graphics adapters, such as a Ryzen or Intel CPU with integrated graphics next to an NVIDIA card. Rewa now records and encodes on the same GPU, preferring the high-performance one, instead of failing with 'Not enough memory resources'. The log names the GPU and codec in use."
+            --notes "Uninstalling now stops Rewa completely, including the tray and the recorder in the background, and removes the autostart task. Setup and uninstaller ask for administrator rights for this, like Rewa itself. Deleting the clip that is open in the player now closes it right away and returns to the start page."
