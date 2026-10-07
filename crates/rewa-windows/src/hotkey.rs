@@ -388,6 +388,91 @@ const HOTKEY_FORCED_REFRESH_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(5 * 60 * 60);
 #[cfg(target_os = "windows")]
 const HOTKEY_PROBE_ID: i32 = 0xBFFE;
+#[cfg(target_os = "windows")]
+const HOOK_HOTKEY_MESSAGE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 2;
+
+#[cfg(any(target_os = "windows", test))]
+fn hook_press_matches(hotkey: NativeHotkey, virtual_key: u32, held_modifiers: u32) -> bool {
+    virtual_key == hotkey.virtual_key && held_modifiers == hotkey.modifiers & !MOD_NOREPEAT_VALUE
+}
+
+#[cfg(target_os = "windows")]
+thread_local! {
+    static HOOKED_HOTKEY: std::cell::Cell<Option<NativeHotkey>> = const { std::cell::Cell::new(None) };
+    static HOOKED_KEY_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(target_os = "windows")]
+fn held_modifiers() -> u32 {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    let down = |virtual_key: i32| unsafe { GetAsyncKeyState(virtual_key) } < 0;
+    [
+        (0x12, MOD_ALT_VALUE),
+        (0x11, MOD_CONTROL_VALUE),
+        (0x10, MOD_SHIFT_VALUE),
+        (0x5b, MOD_WIN_VALUE),
+        (0x5c, MOD_WIN_VALUE),
+    ]
+    .into_iter()
+    .filter(|(virtual_key, _)| down(*virtual_key))
+    .fold(0, |mask, (_, modifier)| mask | modifier)
+}
+
+// Games that read the keyboard as raw input with RIDEV_NOHOTKEYS (League) never let WM_HOTKEY through;
+// a low-level hook sees the key first and swallows it, so RegisterHotKey stays only as the fallback.
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn keyboard_hook(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, PostThreadMessageW, WM_KEYDOWN, WM_KEYUP,
+        WM_SYSKEYDOWN, WM_SYSKEYUP,
+    };
+
+    if code == HC_ACTION as i32
+        && let Some(hotkey) = HOOKED_HOTKEY.get()
+    {
+        let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        if event.vkCode == hotkey.virtual_key {
+            match wparam.0 as u32 {
+                WM_KEYDOWN | WM_SYSKEYDOWN if HOOKED_KEY_HELD.get() => return LRESULT(1),
+                WM_KEYDOWN | WM_SYSKEYDOWN
+                    if hook_press_matches(hotkey, event.vkCode, held_modifiers()) =>
+                {
+                    HOOKED_KEY_HELD.set(true);
+                    let _ = unsafe {
+                        PostThreadMessageW(
+                            GetCurrentThreadId(),
+                            HOOK_HOTKEY_MESSAGE,
+                            WPARAM(0),
+                            LPARAM(0),
+                        )
+                    };
+                    return LRESULT(1);
+                }
+                WM_KEYUP | WM_SYSKEYUP => HOOKED_KEY_HELD.set(false),
+                _ => {}
+            }
+        }
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(target_os = "windows")]
+fn hook_hotkey(hotkey: &HotkeyConfig) {
+    HOOKED_HOTKEY.set(
+        hotkey
+            .is_bound()
+            .then(|| NativeHotkey::try_from(hotkey).ok())
+            .flatten(),
+    );
+    HOOKED_KEY_HELD.set(false);
+}
 
 #[cfg(target_os = "windows")]
 impl HotkeyListener {
@@ -400,7 +485,8 @@ impl HotkeyListener {
 
         use windows::Win32::System::Threading::GetCurrentThreadId;
         use windows::Win32::UI::WindowsAndMessaging::{
-            GetMessageW, KillTimer, MSG, SetTimer, WM_HOTKEY, WM_TIMER,
+            GetMessageW, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, SetTimer, SetWindowsHookExW,
+            UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_HOTKEY, WM_TIMER, WM_USER,
         };
 
         let hotkey = hotkey.clone();
@@ -425,7 +511,24 @@ impl HotkeyListener {
                         return;
                     }
                 };
+                hook_hotkey(&current_hotkey);
+                let keyboard_hook =
+                    match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0) } {
+                        Ok(hook) => Some(hook),
+                        Err(error) => {
+                            rewa_core::diagnostic!(
+                                "Rewa hotkey: cannot watch the keyboard directly, games that swallow shortcuts may block {current_hotkey}: {error}"
+                            );
+                            None
+                        }
+                    };
+                // Without a queue, a PostThreadMessageW right after spawn fails with an invalid thread id.
+                let mut message = MSG::default();
+                let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
                 if ready_sender.send(Ok(thread_id)).is_err() {
+                    if let Some(hook) = keyboard_hook {
+                        let _ = unsafe { UnhookWindowsHookEx(hook) };
+                    }
                     return;
                 }
                 let watchdog_timer = unsafe {
@@ -444,7 +547,6 @@ impl HotkeyListener {
                 }
                 let mut next_forced_refresh =
                     std::time::Instant::now() + HOTKEY_FORCED_REFRESH_INTERVAL;
-                let mut message = MSG::default();
                 loop {
                     let result = unsafe { GetMessageW(&mut message, None, 0, 0) };
                     if result.0 == 0 {
@@ -458,9 +560,10 @@ impl HotkeyListener {
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         continue;
                     }
-                    if message.message == WM_HOTKEY
-                        && (message.wParam.0 == id as usize
-                            || message.wParam.0 == HOTKEY_PROBE_ID as usize)
+                    if message.message == HOOK_HOTKEY_MESSAGE
+                        || message.message == WM_HOTKEY
+                            && (message.wParam.0 == id as usize
+                                || message.wParam.0 == HOTKEY_PROBE_ID as usize)
                     {
                         on_hotkey();
                     } else if message.message == WM_TIMER
@@ -515,7 +618,11 @@ impl HotkeyListener {
                                 }
                             }
                         }
+                        hook_hotkey(&current_hotkey);
                     }
+                }
+                if let Some(hook) = keyboard_hook {
+                    let _ = unsafe { UnhookWindowsHookEx(hook) };
                 }
                 if watchdog_timer != 0 {
                     let _ = unsafe { KillTimer(None, watchdog_timer) };
@@ -682,6 +789,31 @@ mod tests {
         assert!(migrate_legacy_windows_hotkey(&mut hotkey));
         assert_eq!(hotkey, default_windows_hotkey());
         assert!(!migrate_legacy_windows_hotkey(&mut hotkey));
+    }
+
+    #[test]
+    fn the_keyboard_hook_fires_only_on_the_exact_combination() {
+        let f8 = NativeHotkey::try_from(&HotkeyConfig {
+            modifiers: Vec::new(),
+            key: "F8".into(),
+        })
+        .unwrap();
+        let ctrl_r = NativeHotkey::try_from(&default_windows_hotkey()).unwrap();
+
+        assert!(hook_press_matches(f8, 0x77, 0));
+        assert!(!hook_press_matches(f8, 0x77, MOD_SHIFT_VALUE));
+        assert!(!hook_press_matches(f8, 0x76, 0));
+        assert!(hook_press_matches(
+            ctrl_r,
+            u32::from(b'R'),
+            MOD_CONTROL_VALUE
+        ));
+        assert!(!hook_press_matches(ctrl_r, u32::from(b'R'), 0));
+        assert!(!hook_press_matches(
+            ctrl_r,
+            u32::from(b'R'),
+            MOD_CONTROL_VALUE | MOD_ALT_VALUE
+        ));
     }
 
     #[test]
