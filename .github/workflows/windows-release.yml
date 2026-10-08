@@ -6,7 +6,7 @@ on:
       version:
         description: Semantic version without the v prefix
         required: true
-        default: 2.2.4
+        default: 2.2.5
         type: string
 
 permissions:
@@ -68,4 +68,4 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Rewa $env:RELEASE_VERSION" `
-            --notes "The save shortcut now also works in games that swallow shortcuts of other programs, such as League of Legends. Rewa watches the keyboard directly, like Medal, and keeps the old registration as a fallback."
+            --notes "Clips now always reach the length you set. Before, a hidden 64 MB memory limit cut replays at high frame rates down to about ten seconds."
