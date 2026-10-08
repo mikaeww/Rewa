@@ -16,7 +16,7 @@ Nothing is uploaded, there is no account and no telemetry.
 
 ## Features
 
-- Replay from 5 seconds to 10 minutes, held in a memory limit you set
+- Replay from 5 seconds to 10 minutes, always the full length you set
 - GPU encoding on AMD, Intel and NVIDIA, with H.264, HEVC or AV1 up to 60 fps
 - Desktop sound and microphone, each with its own level
 - A clip library with search, collections, rename, playback and trimming

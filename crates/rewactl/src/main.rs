@@ -356,9 +356,6 @@ fn configure(arguments: &[String]) -> Result<(), String> {
         "quality" => {
             config.capture.quality = parse_number(value, "quality")?;
         }
-        "memory" => {
-            config.capture.memory_megabytes = parse_number(value, "memory")?;
-        }
         "desktop-gain" => {
             config.audio.desktop_gain_percent = parse_number(value, "desktop-gain")?;
         }
@@ -472,7 +469,7 @@ fn print_help() {
          shutdown  stop the daemon\n\n\
          examples:\n  rewactl config monitor DP-1\n  rewactl config hotkey SUPER+SHIFT+R\n  \
          rewactl config duration 30\n  rewactl config fps 60\n  \
-         rewactl config codec av1\n  rewactl config memory 128\n  \
+         rewactl config codec av1\n  \
          rewactl cut ~/Videos/Rewa/clip.mp4 8 20 --name \"Best bit\""
     );
 }

@@ -203,19 +203,16 @@ is mostly the replay itself: bitrate times duration. At the default quality that
 would be roughly 37 MB at 1080p60, 100 MB at 1440p60 and 224 MB at 2160p60 for a
 30 second buffer — the clip itself, not overhead.
 
-`memory_megabytes` decides which of those the recorder is allowed to become. It
-is a hard ceiling between 32 and 512 MB, 64 by default, and it wins over the
-estimate, so a 4K display does not quietly triple the process. What gives way
-instead is length: the ring keeps the newest seconds that fit and the log names
-how many that is.
+There is no memory ceiling: the replay always holds the configured duration,
+so the footprint is whatever these settings cost. The buffer's byte budget is
+twice the estimate and only stops an encoder that overshoots its constant
+bitrate from growing without bound; if it ever drops a group, the log says so.
 
 What that means in practice:
 
-- `rewactl config memory 96` pins the footprint. Lower it until the number in
-  the log is what you want and read what it costs in seconds.
-- `rewactl config codec hevc` buys about a third more seconds inside the same
-  ceiling, because it is the same bytes that go into the file.
-- A shorter `duration` scales the requirement directly.
+- `rewactl config codec hevc` costs about a third less memory for the same
+  seconds, because it is the same bytes that go into the file.
+- A shorter `duration`, a lower `fps` or `quality` scale the footprint directly.
 - The recorder reports its own footprint and how much of it is encoded replay
   to the log every 30 seconds, so the inherent part can be told from waste.
 
@@ -238,12 +235,10 @@ Three levers, in the order worth reaching for:
 - `rewactl config fps 30` or a shorter `duration` — both scale the size
   directly.
 
-A saved clip is never shorter than its configured duration while the memory
-ceiling has room for it. The buffer trims by whole groups of pictures, and a
-group is only dropped while what remains still covers the target, so a clip runs
-from that duration up to one group longer. Only `memory_megabytes` overrides
-that, and never silently: the recorder logs the seconds the ceiling holds when
-the pipeline starts, and again whenever the budget is what dropped a group.
+A saved clip is never shorter than its configured duration once the recorder
+has run that long. The buffer trims by whole groups of pictures, and a group is
+only dropped while what remains still covers the target, so a clip runs from
+that duration up to one group longer.
 
 The encoder runs at a constant bitrate. Variable bitrate would let a still
 menu cost a fraction of a fast pan, but configuring it through `ICodecAPI`
@@ -287,13 +282,8 @@ pipeline selected, the exact D3D11 adapter name and PCI vendor/device IDs used
 by capture, its current encoded replay size, and the buffered duration.
 `Reload settings` also rebuilds a pipeline in the error state, so a corrected
 display mode or temporarily lost device can be recovered without restarting the
-tray application. How much memory the ring may use is a setting rather than a
-consequence of the display: `memory_megabytes` under `[capture]` is a hard
-ceiling between 32 and 512 MB, 128 by default, and the budget is the smaller of
-that ceiling and two and a half times the estimate for the configured settings.
-A replay that does not fit is trimmed at its start, and the log says so with the
-seconds the ceiling actually holds, so the recorder keeps the same footprint at
-4K60 that it has at 1080p60 instead of growing with the resolution. The tray checks health every five seconds and automatically attempts a
+tray application. The ring always holds the configured duration; its memory follows the
+settings. The tray checks health every five seconds and automatically attempts a
 failed pipeline recovery after sleep/resume or display-mode changes. Failed
 recovery attempts use a 30-second backoff to avoid a resource-heavy restart loop.
 The recorder no longer depends on that: it runs the same recovery on its own

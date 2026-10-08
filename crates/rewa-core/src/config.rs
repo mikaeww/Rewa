@@ -134,9 +134,6 @@ pub struct CaptureConfig {
     pub cursor: bool,
     pub follow_game: bool,
     pub games: Vec<String>,
-    /// Hard ceiling for the encoded replay held in memory. The replay is
-    /// trimmed to fit rather than the recorder growing with the resolution.
-    pub memory_megabytes: u16,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,7 +208,6 @@ impl Default for CaptureConfig {
             cursor: true,
             follow_game: true,
             games: Vec::new(),
-            memory_megabytes: 64,
         }
     }
 }
@@ -388,11 +384,6 @@ impl Config {
                 "quality must be between 0 and 100".into(),
             ));
         }
-        if !(32..=512).contains(&self.capture.memory_megabytes) {
-            return Err(ConfigError::Invalid(
-                "replay memory must be between 32 and 512 megabytes".into(),
-            ));
-        }
         if self.audio.microphone_gain_percent > 200 {
             return Err(ConfigError::Invalid(
                 "microphone recording level must be between 0 and 200 percent".into(),
@@ -430,10 +421,15 @@ mod tests {
 
     #[test]
     fn default_config_is_valid() {
-        let config = Config::default();
+        Config::default().validate().unwrap();
+    }
 
-        config.validate().unwrap();
-        assert_eq!(config.capture.memory_megabytes, 64);
+    #[test]
+    fn a_config_from_before_the_memory_limit_was_dropped_still_loads() {
+        let config: Config =
+            toml::from_str("[capture]\nduration_seconds = 45\nmemory_megabytes = 64\n").unwrap();
+
+        assert_eq!(config.capture.duration_seconds, 45);
     }
 
     #[test]
