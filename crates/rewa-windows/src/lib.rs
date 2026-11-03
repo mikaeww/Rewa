@@ -9,6 +9,7 @@ pub mod encoder;
 pub mod feedback;
 pub mod game;
 pub mod hotkey;
+pub mod keyframe;
 pub mod memory;
 pub mod meter;
 pub mod mux;

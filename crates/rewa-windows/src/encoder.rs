@@ -51,6 +51,10 @@ pub struct HardwareVideoEncoder {
     transform: windows::Win32::Media::MediaFoundation::IMFTransform,
     events: windows::Win32::Media::MediaFoundation::IMFMediaEventGenerator,
     _device_manager: windows::Win32::Media::MediaFoundation::IMFDXGIDeviceManager,
+    codec_api: Option<windows::Win32::Media::MediaFoundation::ICodecAPI>,
+    cadence: crate::keyframe::KeyframeCadence,
+    forced_keyframes: u64,
+    reported_unflagged_keyframe: bool,
     settings: EncoderSettings,
     codec: crate::video::HardwareCodec,
 }
@@ -89,6 +93,7 @@ impl HardwareVideoEncoder {
             .map_err(|error| VideoError::Initialization(error.to_string()))?;
         unsafe { attributes.SetUINT32(&MF_LOW_LATENCY, 1) }
             .map_err(|error| VideoError::Initialization(error.to_string()))?;
+        let codec_api = configure_gop_size(&transform, settings.keyframe_interval_frames());
 
         let mut reset_token = 0_u32;
         let mut device_manager = None;
@@ -126,6 +131,10 @@ impl HardwareVideoEncoder {
             transform,
             events,
             _device_manager: device_manager,
+            codec_api,
+            cadence: crate::keyframe::KeyframeCadence::new(settings.keyframe_interval_frames()),
+            forced_keyframes: 0,
+            reported_unflagged_keyframe: false,
             settings,
             codec,
         })
@@ -150,7 +159,7 @@ impl HardwareVideoEncoder {
     }
 
     pub fn submit_texture(
-        &self,
+        &mut self,
         texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
         timestamp: std::time::Duration,
     ) -> Result<(), VideoError> {
@@ -161,6 +170,9 @@ impl HardwareVideoEncoder {
         let buffer = unsafe { MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, texture, 0, false) }
             .map_err(initialization_error)?;
         let sample = unsafe { MFCreateSample() }.map_err(initialization_error)?;
+        if self.cadence.note_submitted() {
+            self.force_keyframe();
+        }
         let submit = || -> windows::core::Result<()> {
             unsafe {
                 sample.AddBuffer(&buffer)?;
@@ -174,7 +186,7 @@ impl HardwareVideoEncoder {
     }
 
     pub fn take_packet(
-        &self,
+        &mut self,
     ) -> Result<Option<rewa_core::replay_buffer::EncodedPacket>, VideoError> {
         use std::mem::ManuallyDrop;
         use std::time::Duration;
@@ -234,8 +246,12 @@ impl HardwareVideoEncoder {
         let duration_hns = unsafe { sample.GetSampleDuration() }
             .unwrap_or(self.frame_duration_hns())
             .max(0) as u64;
-        let keyframe =
+        let clean_point =
             unsafe { sample.GetUINT32(&MFSampleExtension_CleanPoint) }.unwrap_or_default() != 0;
+        let keyframe = clean_point || self.note_unflagged_keyframe(&payload);
+        if keyframe {
+            self.cadence.note_keyframe();
+        }
         Ok(Some(rewa_core::replay_buffer::EncodedPacket {
             track: rewa_core::replay_buffer::TrackKind::Video,
             timestamp: Duration::from_nanos(timestamp_hns.saturating_mul(100)),
@@ -301,6 +317,45 @@ impl HardwareVideoEncoder {
         .map_err(initialization_error)
     }
 
+    fn note_unflagged_keyframe(&mut self, payload: &[u8]) -> bool {
+        if !crate::keyframe::starts_with_random_access_picture(self.codec, payload) {
+            return false;
+        }
+        if !self.reported_unflagged_keyframe {
+            self.reported_unflagged_keyframe = true;
+            rewa_core::diagnostic!(
+                "Rewa encoder: keyframe without clean point flag; detected from its NAL type"
+            );
+        }
+        true
+    }
+
+    fn force_keyframe(&mut self) {
+        use windows::Win32::Media::MediaFoundation::CODECAPI_AVEncVideoForceKeyFrame;
+        use windows::Win32::System::Variant::VARIANT;
+
+        self.forced_keyframes = self.forced_keyframes.saturating_add(1);
+        let result = match &self.codec_api {
+            Some(codec_api) => unsafe {
+                codec_api.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &VARIANT::from(1_u32))
+            }
+            .map_err(|error| error.to_string()),
+            None => Err("the encoder has no ICodecAPI".into()),
+        };
+        if self.forced_keyframes.is_power_of_two() {
+            let interval = self.settings.keyframe_interval_frames();
+            let forced = self.forced_keyframes;
+            match result {
+                Ok(()) => rewa_core::diagnostic!(
+                    "Rewa encoder: no keyframe within {interval} frames; forced {forced} so far"
+                ),
+                Err(error) => rewa_core::diagnostic!(
+                    "Rewa encoder: no keyframe within {interval} frames; forcing one failed {forced} times: {error}"
+                ),
+            }
+        }
+    }
+
     fn frame_duration_hns(&self) -> i64 {
         10_000_000_i64 / i64::from(self.settings.frames_per_second)
     }
@@ -309,6 +364,35 @@ impl HardwareVideoEncoder {
 #[cfg(target_os = "windows")]
 fn duration_to_hns(duration: std::time::Duration) -> i64 {
     i64::try_from(duration.as_nanos() / 100).unwrap_or(i64::MAX)
+}
+
+// MF_MT_MAX_KEYFRAME_SPACING alone is ignored by some drivers (AMD H.264, issue #13).
+#[cfg(target_os = "windows")]
+fn configure_gop_size(
+    transform: &windows::Win32::Media::MediaFoundation::IMFTransform,
+    interval_frames: u32,
+) -> Option<windows::Win32::Media::MediaFoundation::ICodecAPI> {
+    use windows::Win32::Media::MediaFoundation::{CODECAPI_AVEncMPVGOPSize, ICodecAPI};
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::core::Interface;
+
+    let codec_api = match transform.cast::<ICodecAPI>() {
+        Ok(codec_api) => codec_api,
+        Err(error) => {
+            rewa_core::diagnostic!(
+                "Rewa encoder: no ICodecAPI, keyframes cannot be forced: {error}"
+            );
+            return None;
+        }
+    };
+    if let Err(error) =
+        unsafe { codec_api.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(interval_frames)) }
+    {
+        rewa_core::diagnostic!(
+            "Rewa encoder: GOP size of {interval_frames} frames rejected: {error}"
+        );
+    }
+    Some(codec_api)
 }
 
 #[cfg(target_os = "windows")]

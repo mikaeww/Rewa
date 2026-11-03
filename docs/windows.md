@@ -240,6 +240,15 @@ has run that long. The buffer trims by whole groups of pictures, and a group is
 only dropped while what remains still covers the target, so a clip runs from
 that duration up to one group longer.
 
+A group is two seconds. The encoder is asked for that through
+`MF_MT_MAX_KEYFRAME_SPACING` and, before the output type is set, through
+`ICodecAPI`'s GOP size, but some drivers ignore both (AMD H.264 sent one
+keyframe in three minutes, #13). Without keyframes the buffer cannot trim and
+eventually drops everything, so when none has arrived for three seconds Rewa
+forces one with `CODECAPI_AVEncVideoForceKeyFrame`. Keyframes are also
+recognised from their H.264 or HEVC NAL type when the driver leaves the clean
+point flag off. The log says when either happens.
+
 The encoder runs at a constant bitrate. Variable bitrate would let a still
 menu cost a fraction of a fast pan, but configuring it through `ICodecAPI`
 after the output type is set left hardware encoders producing distorted
