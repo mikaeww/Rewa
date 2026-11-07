@@ -43,7 +43,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_DPICHANGED, WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP,
     WM_SETCURSOR, WM_SETREDRAW, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_CHILD,
-    WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+    WS_CLIPCHILDREN, WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -279,7 +280,8 @@ fn run_initialized() -> Result<(), String> {
             WINDOW_EX_STYLE::default(),
             WINDOW_CLASS,
             w!("Rewa"),
-            WS_OVERLAPPEDWINDOW,
+            // the video child is painted by Media Foundation; the 30 fps UI repaint must not cover it
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1440,
