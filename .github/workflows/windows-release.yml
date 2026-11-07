@@ -6,7 +6,7 @@ on:
       version:
         description: Semantic version without the v prefix
         required: true
-        default: 2.2.6
+        default: 2.2.7
         type: string
 
 permissions:
@@ -68,4 +68,4 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Rewa $env:RELEASE_VERSION" `
-            --notes "F7 saves clips again on graphics drivers that send too few keyframes, such as AMD with H.264. Before, the replay emptied itself after a few minutes and stayed empty (#13)."
+            --notes "The Rewa player no longer paints the interface over the video. Before, that happened about 30 times a second, so smooth clips looked like 20 to 40 fps (#14)."
