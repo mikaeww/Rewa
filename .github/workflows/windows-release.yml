@@ -6,7 +6,7 @@ on:
       version:
         description: Semantic version without the v prefix
         required: true
-        default: 2.2.7
+        default: 2.2.8
         type: string
 
 permissions:
@@ -68,4 +68,4 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $env:GITHUB_SHA `
             --title "Rewa $env:RELEASE_VERSION" `
-            --notes "The Rewa player no longer paints the interface over the video. Before, that happened about 30 times a second, so smooth clips looked like 20 to 40 fps (#14)."
+            --notes "Animations now run at your display's refresh rate instead of about 30 fps and finish sooner, so the app no longer feels laggy. The clip preview gives the video 85 % of the width; rename, edit and delete moved to the title row."
