@@ -14,27 +14,15 @@ impl Renderer {
         let title = model
             .active_clip()
             .map_or(self.strings.preview_title, |clip| clip.title.as_str());
-        let detail_width = if right - left >= 960.0 { 276.0 } else { 0.0 };
-        // edit and delete sit together: under the details, or in the title row when
-        // the window is too narrow for the details column
-        let actions_left = if detail_width > 0.0 {
-            None
-        } else {
-            Some(right - self.clip_actions_width())
-        };
-        self.page_toolbar(
-            title,
-            left,
-            actions_left.map_or(right, |x| x - 16.0),
-            Action::Back,
-        )?;
-        if let (Some(x), Some(index)) = (actions_left, model.active_clip) {
-            self.clip_actions(x, content_top() + 2.0, index)?;
+        let actions_left = right - self.clip_actions_width();
+        self.page_toolbar(title, left, actions_left - 16.0, Action::Back)?;
+        if let Some(index) = model.active_clip {
+            self.clip_actions(actions_left, content_top() + 2.0, index)?;
         }
-        let Some(clip) = model.active_clip() else {
+        if model.active_clip().is_none() {
             self.empty_state(self.strings.clip_unavailable, left, right, PLAYER_TOP)?;
             return Ok(());
-        };
+        }
         let stage = video_stage(left, right, height, model);
         // square like the child window on top of it; a window region cannot be antialiased
         self.fill(stage, 0x000000, 0.0)?;
@@ -72,29 +60,27 @@ impl Renderer {
                 self.door(area, glyph, false, action)?;
             }
         }
-
-        if detail_width > 0.0 {
-            let detail_left = right - detail_width;
-            let bottom = self.clip_information_panel(model, clip, detail_left, right, stage.top)?;
-            if let Some(index) = model.active_clip {
-                self.clip_actions(detail_left, bottom + 14.0, index)?;
-            }
-        }
         Ok(())
     }
 
     pub(crate) fn clip_actions_width(&self) -> f32 {
-        [self.strings.edit_clip, self.strings.delete_clip]
+        let labels = [
+            self.strings.rename,
+            self.strings.edit_clip,
+            self.strings.delete_clip,
+        ];
+        labels
             .iter()
             .map(|label| self.measure(label, &self.small_center) + 28.0)
             .sum::<f32>()
-            + 8.0
+            + 8.0 * (labels.len() - 1) as f32
     }
 
-    /// The preview's two clip actions as quick pills, edit first.
+    /// The preview's clip actions as quick pills in the title row, delete last.
     pub(crate) fn clip_actions(&mut self, left: f32, top: f32, index: usize) -> Result<(), String> {
         let mut x = left;
         for (label, action, destructive) in [
+            (self.strings.rename, Action::RenameActiveClip, false),
             (self.strings.edit_clip, Action::EditActiveClip, false),
             (self.strings.delete_clip, Action::DeleteClip(index), true),
         ] {
@@ -226,47 +212,6 @@ impl Renderer {
         }
         self.fill(knob, 0xffffff, radius)?;
         self.stroke(knob, 0xd9d9d9, radius, 0.5)
-    }
-
-    /// The clip's facts as macOS shows them in Get Info; returns the card's foot.
-    pub(crate) fn clip_information_panel(
-        &mut self,
-        model: &UiModel,
-        clip: &rewa_core::clips::Clip,
-        left: f32,
-        right: f32,
-        top: f32,
-    ) -> Result<f32, String> {
-        let resolution = if model.player_video_width > 0 && model.player_video_height > 0 {
-            format!("{}×{}", model.player_video_width, model.player_video_height)
-        } else {
-            self.strings.loading.to_owned()
-        };
-        let rows = [
-            (self.strings.field_title, clip.title.clone()),
-            (
-                self.strings.field_created,
-                crate::clock::stamp_label(
-                    crate::clock::local(clip.modified),
-                    crate::clock::now(),
-                    self.strings,
-                ),
-            ),
-            (
-                self.strings.field_duration,
-                format_player_time(model.player_duration_seconds),
-            ),
-            (self.strings.field_size, format_bytes(clip.size_bytes)),
-            (self.strings.field_resolution, resolution),
-        ];
-        self.detail_card(
-            left,
-            right,
-            top,
-            self.strings.clip_information,
-            &rows,
-            Some(Action::RenameActiveClip),
-        )
     }
 
     /// A captioned hairline card of label/value lines; the first line may carry a

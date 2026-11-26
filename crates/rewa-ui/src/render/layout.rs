@@ -49,6 +49,8 @@ pub(crate) const NAVIGATION_TOP: f32 = 62.0;
 pub(crate) const NAVIGATION_HEIGHT: f32 = 30.0;
 pub(crate) const NAVIGATION_PITCH: f32 = 32.0;
 pub(crate) const EDITOR_BOTTOM_RESERVE: f32 = 226.0;
+/// Room under the preview's video for the playback row.
+pub(crate) const PLAYER_BOTTOM_RESERVE: f32 = 84.0;
 pub(crate) const PLAYER_ARROW_GUTTER: f32 = 48.0;
 /// Where the seek rail starts under the video, after play and the time.
 pub(crate) const PLAYER_RAIL_LEFT: f32 = 118.0;
@@ -93,16 +95,20 @@ pub(crate) fn editor_player_bounds(model: &UiModel, width: u32, height: u32) -> 
 }
 
 /// The video stage of preview and editor; the player child window takes the same
-/// rectangle. The preview keeps a gutter on both sides for the clip arrows.
+/// rectangle. The preview gives the video 85 % of the width, the clip arrows sit beside it.
 pub(crate) fn video_stage(left: f32, right: f32, height: f32, model: &UiModel) -> LogicalRect {
-    let detail = if right - left >= 960.0 { 300.0 } else { 0.0 };
-    let (gutter, bottom) = if model.page == Page::Editor {
-        (0.0, (height - EDITOR_BOTTOM_RESERVE).max(360.0))
+    let (side, bottom) = if model.page == Page::Editor {
+        let detail = if right - left >= 960.0 { 300.0 } else { 0.0 };
+        ((0.0, detail), (height - EDITOR_BOTTOM_RESERVE).max(360.0))
     } else {
-        (PLAYER_ARROW_GUTTER, (height - 178.0).max(390.0))
+        let gutter = ((right - left) * 0.075).max(PLAYER_ARROW_GUTTER);
+        (
+            (gutter, gutter),
+            (height - PLAYER_BOTTOM_RESERVE).max(390.0),
+        )
     };
     fit_aspect(
-        rect(left + gutter, PLAYER_TOP, right - detail - gutter, bottom),
+        rect(left + side.0, PLAYER_TOP, right - side.1, bottom),
         model.player_aspect_ratio,
     )
 }
