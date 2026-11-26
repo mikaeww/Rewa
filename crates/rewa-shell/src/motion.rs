@@ -15,8 +15,8 @@ pub enum Curve {
 impl Curve {
     const fn spring(self) -> Option<(f32, f32)> {
         match self {
-            Self::Glide => Some((0.34, 0.82)),
-            Self::Settle => Some((0.30, 0.86)),
+            Self::Glide => Some((0.26, 0.84)),
+            Self::Settle => Some((0.22, 0.88)),
             Self::Quick => None,
         }
     }
@@ -156,11 +156,11 @@ mod tests {
 
     #[test]
     fn springs_match_leech_and_quick_is_the_css_ease() {
-        // Leech's sampled linear() springs last about 0.4 s; the glide one is the slower of the two
+        // tighter than Leech's 0.4 s springs: on Windows the long tail read as lag
         let glide = Curve::Glide.duration().as_secs_f32();
         let settle = Curve::Settle.duration().as_secs_f32();
         assert!(
-            (0.3..0.6).contains(&settle) && glide > settle,
+            (0.2..0.4).contains(&settle) && glide > settle && glide < 0.4,
             "{glide} {settle}"
         );
         let peak = (0..=100)

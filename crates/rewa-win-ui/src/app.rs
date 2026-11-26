@@ -83,7 +83,6 @@ const FULLSCREEN_CONTROLS_HEIGHT: f32 = 84.0;
 
 struct AppState {
     model: UiModel,
-    fast_timer: bool,
     renderer: Renderer,
     fullscreen_renderer: Renderer,
     width: u32,
@@ -258,7 +257,6 @@ fn run_initialized() -> Result<(), String> {
         microphone_meter: MicrophoneMeter::closed(),
         microphone_probe: None,
         microphone_due: Instant::now(),
-        fast_timer: false,
         editor_drag: None,
         editor_drag_origin: None,
         clip_drag: None,
@@ -348,7 +346,8 @@ fn run_initialized() -> Result<(), String> {
             }
         }
         (*state).dpi = GetDpiForWindow(window).max(96);
-        let _ = SetTimer(Some(window), PLAYER_TIMER, 33, None);
+        // timers fire on the 15.6 ms system tick, so 33 ms would land on 46.9 ms (21 fps)
+        let _ = SetTimer(Some(window), PLAYER_TIMER, 30, None);
     }
     unsafe {
         let _ = ShowWindow(window, SW_RESTORE);
@@ -485,6 +484,7 @@ unsafe extern "system" fn window_proc(
                 state.width = client.right.max(0) as u32;
                 state.height = client.bottom.max(0) as u32;
                 let scale = state.dpi as f32 / 96.0;
+                state.renderer.advance_motion();
                 let painted = state.renderer.paint(
                     window,
                     &state.model,
@@ -500,7 +500,8 @@ unsafe extern "system" fn window_proc(
                         state.model.strings().notice_render_failed
                     ));
                 }
-                if state.renderer.wants_recovery_repaint() {
+                // EndDraw waits for vblank, so moving springs repaint at the display's rate
+                if state.renderer.wants_recovery_repaint() || state.renderer.is_animating() {
                     redraw(window);
                 }
             }
@@ -990,19 +991,6 @@ unsafe extern "system" fn window_proc(
                 }
                 let notice_changed = expire_notice(state);
                 let motion_changed = state.renderer.advance_motion();
-                // springs need 60 fps while they move; the 30 fps poll is enough at rest
-                let animating = state.renderer.is_animating();
-                if animating != state.fast_timer {
-                    state.fast_timer = animating;
-                    let _ = unsafe {
-                        SetTimer(
-                            Some(window),
-                            PLAYER_TIMER,
-                            if animating { 16 } else { 33 },
-                            None,
-                        )
-                    };
-                }
                 let fullscreen_motion_changed = state.fullscreen_renderer.advance_motion();
                 track_fullscreen_cursor(state);
                 let fullscreen_visibility_changed = update_fullscreen_controls_visibility(state);
@@ -1078,6 +1066,7 @@ unsafe extern "system" fn fullscreen_controls_proc(
                     ((state.width as f32 / scale).round() as u32).max(1),
                     ((state.height as f32 / scale).round() as u32).max(1),
                 );
+                state.fullscreen_renderer.advance_motion();
                 let _ = state.fullscreen_renderer.paint_fullscreen_controls(
                     window,
                     &state.model,
@@ -1085,6 +1074,9 @@ unsafe extern "system" fn fullscreen_controls_proc(
                     height,
                     picture,
                 );
+                if state.fullscreen_renderer.is_animating() {
+                    redraw(window);
+                }
             }
             let _ = unsafe { EndPaint(window, &paint) };
             LRESULT(0)
