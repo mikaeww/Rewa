@@ -1,7 +1,9 @@
 //! Clip playback through GTK's media stream (GStreamer underneath), with the
 //! calls the Windows Media Foundation player offers the interface.
 
+use std::cell::Cell;
 use std::path::Path;
+use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio};
@@ -20,15 +22,41 @@ pub struct PlayerSnapshot {
 pub struct Player {
     media: gtk::MediaFile,
     loaded: bool,
+    seek: Rc<Cell<SeekState>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SeekState {
+    /// Where the playhead is headed until the running seek lands.
+    target: Option<i64>,
+    /// The latest request, held back while an earlier seek still runs.
+    waiting: Option<i64>,
 }
 
 const MICROSECONDS: f64 = 1_000_000.0;
 
 impl Player {
     pub fn new() -> Self {
+        let media = gtk::MediaFile::new();
+        let seek = Rc::new(Cell::new(SeekState::default()));
+        let state = Rc::clone(&seek);
+        media.connect_seeking_notify(move |media| {
+            if media.is_seeking() {
+                return;
+            }
+            let mut current = state.get();
+            match current.waiting.take() {
+                Some(timestamp) => {
+                    state.set(current);
+                    media.seek(timestamp);
+                }
+                None => state.set(SeekState::default()),
+            }
+        });
         Self {
-            media: gtk::MediaFile::new(),
+            media,
             loaded: false,
+            seek,
         }
     }
 
@@ -43,6 +71,7 @@ impl Player {
 
     /// Opens a clip and starts it as soon as it is ready, like the Windows player.
     pub fn open(&mut self, path: &Path, volume_percent: u8) -> Result<(), String> {
+        self.seek.set(SeekState::default());
         self.media.set_file(Some(&gio::File::for_path(path)));
         self.media
             .set_volume(f64::from(volume_percent.min(100)) / 100.0);
@@ -60,6 +89,7 @@ impl Player {
         }
         self.media.pause();
         self.media.clear();
+        self.seek.set(SeekState::default());
         self.loaded = false;
     }
 
@@ -106,8 +136,17 @@ impl Player {
             return Ok(());
         }
         let duration = self.media.duration();
-        self.media
-            .seek((duration as f64 * fraction.clamp(0.0, 1.0)).round() as i64);
+        let timestamp = (duration as f64 * fraction.clamp(0.0, 1.0)).round() as i64;
+        // GTK seeks to the exact frame; a new seek flushes the running one, so on
+        // long clips a drag would cancel every seek before it shows a frame
+        let waiting = self.media.is_seeking().then_some(timestamp);
+        self.seek.set(SeekState {
+            target: Some(timestamp),
+            waiting,
+        });
+        if waiting.is_none() {
+            self.media.seek(timestamp);
+        }
         Ok(())
     }
 
@@ -124,8 +163,12 @@ impl Player {
         let duration_seconds = self.media.duration() as f64 / MICROSECONDS;
         // GStreamer reports 0 once a clip has ended; the playhead belongs at the end,
         // as on Windows, so there is something to drag back from
+        let seek_target = self.seek.get().target.filter(|_| self.media.is_seeking());
         let position_seconds = if self.media.is_ended() {
             duration_seconds
+        } else if let Some(target) = seek_target {
+            // the old frame's time would pull the playhead back until the seek lands
+            target as f64 / MICROSECONDS
         } else {
             self.media.timestamp() as f64 / MICROSECONDS
         };
